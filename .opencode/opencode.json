@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "oc-orchestrator": {
+      "type": "local",
+      "command": [
+        "oc-orchestrator",
+        "serve",
+        "--root",
+        "/Users/acabski/Documents/important/oc-orchestrator"
+      ],
+      "enabled": true
+    }
+  }
+}
