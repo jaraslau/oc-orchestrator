@@ -24,8 +24,10 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
         acceptance_criteria: list[str] | None = None,
         dependencies: list[str] | None = None,
         risks: list[str] | None = None,
+        role: str | None = None,
     ) -> dict:
-        """Create a task in the ledger with an assigned branch name."""
+        """Create a task in the ledger with an assigned branch name. role assigns
+        the worker persona used at dispatch time (e.g. orchestrator-tester)."""
         return _service.create_task(
             base,
             title=title,
@@ -33,15 +35,22 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
             acceptance_criteria=acceptance_criteria,
             dependencies=dependencies,
             risks=risks,
+            role=role,
         )
 
     @mcp.tool()
     def dispatch_task(
-        task_id: str, model: str | None = None, instructions: str | None = None
+        task_id: str,
+        model: str | None = None,
+        instructions: str | None = None,
+        role: str | None = None,
     ) -> dict:
         """Dispatch a worker agent for a task (non-blocking). Use instructions to
-        pass correction details when re-dispatching after changes were requested."""
-        return _service.dispatch_task(base, task_id, model=model, instructions=instructions)
+        pass correction details when re-dispatching after changes were requested.
+        role overrides the worker persona for this dispatch (e.g. orchestrator-reviewer)."""
+        return _service.dispatch_task(
+            base, task_id, model=model, instructions=instructions, role=role
+        )
 
     @mcp.tool()
     def task_status(task_id: str, timeout_seconds: float = 0.0) -> dict:

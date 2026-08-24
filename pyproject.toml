@@ -9,7 +9,7 @@ dependencies = ["mcp>=1.2,<2"]
 
 [tool.poetry]
 packages = [{ include = "orchestrator", from = "src" }]
-include = [{ path = "src/orchestrator/agents/*.md", format = ["sdist", "wheel"] }]
+include = [{ path = "src/orchestrator/agents/**/*.md", format = ["sdist", "wheel"] }]
 
 [tool.poetry.scripts]
 oc-orchestrator = "orchestrator.cli:main"

@@ -24,11 +24,12 @@ def render_delegation(
     config: Config,
     task: Task,
     extra_instructions: str | None = None,
+    worker_agent: str | None = None,
 ) -> str:
     criteria = "\n".join(f"- {c}" for c in task.acceptance_criteria) or "- (none specified)"
     deps = ", ".join(task.dependencies) if task.dependencies else "(none)"
     extra = f"\nAdditional instructions:\n{extra_instructions}\n" if extra_instructions else ""
-    return f"""You are Worker Agent {config.worker_agent}.
+    return f"""You are Worker Agent {worker_agent or config.worker_agent}.
 
 Task:
 {task.id} - {task.title}

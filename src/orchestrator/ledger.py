@@ -44,6 +44,7 @@ class Task:
     pr: str | None = None
     last_result: str | None = None
     handoff: dict[str, str] | None = None
+    role: str | None = None
     risks: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)

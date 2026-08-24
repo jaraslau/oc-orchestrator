@@ -15,6 +15,11 @@ def repo(tmp_path):
     (r / "readme.md").write_text("scratch\n")
     subprocess.run(["git", "-C", str(r), *env_args, "add", "."], check=True)
     subprocess.run(["git", "-C", str(r), *env_args, "commit", "-qm", "init"], check=True)
+    agents = r / ".opencode" / "agent"
+    agents.mkdir(parents=True)
+    (agents / "orchestrator-worker.md").write_text(
+        "---\ndescription: default worker\nmode: primary\n---\nworker stub\n"
+    )
     return r
 
 

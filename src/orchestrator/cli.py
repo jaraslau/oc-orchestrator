@@ -23,6 +23,7 @@ WORKER_AGENT_FILENAME = "orchestrator-worker.md"
 MCP_SERVER_NAME = "oc-orchestrator"
 GITIGNORE_ENTRY = ".orchestrator/"
 AGENTS_PACKAGE = "orchestrator.agents"
+ROLES_PACKAGE = "orchestrator.agents.roles"
 ROOT_ENV_VAR = "OC_ORCHESTRATOR_ROOT"
 
 
@@ -82,22 +83,25 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     agents_dir = root / OPENCODE_DIRNAME / AGENT_SUBDIR
     agents_dir.mkdir(parents=True, exist_ok=True)
+    installed_agents = [MANAGER_AGENT_FILENAME, WORKER_AGENT_FILENAME]
     (agents_dir / MANAGER_AGENT_FILENAME).write_text(
         _load_agent_definition(MANAGER_AGENT_FILENAME), encoding="utf-8"
     )
     (agents_dir / WORKER_AGENT_FILENAME).write_text(
         _load_agent_definition(WORKER_AGENT_FILENAME), encoding="utf-8"
     )
+    for role_file in resources.files(ROLES_PACKAGE).iterdir():
+        if role_file.name.endswith(".md") and role_file.is_file():
+            (agents_dir / role_file.name).write_text(role_file.read_text(encoding="utf-8"))
+            installed_agents.append(role_file.name)
 
     ok = _merge_opencode_config(root)
     ignored = _ensure_gitignore_entry(root)
 
     print(f"initialized orchestration state in {root}")
     print(f"  state dir:   {root / '.orchestrator'}")
-    print(
-        f"  agents:      {OPENCODE_DIRNAME}/{AGENT_SUBDIR}/"
-        f"({MANAGER_AGENT_FILENAME}, {WORKER_AGENT_FILENAME})"
-    )
+    agents_list = ", ".join(sorted(installed_agents))
+    print(f"  agents:      {OPENCODE_DIRNAME}/{AGENT_SUBDIR}/ ({agents_list})")
     print(f"  mcp config:  {OPENCODE_DIRNAME}/{OPENCODE_CONFIG_FILENAME}")
     if not ok:
         return 1
