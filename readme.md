@@ -10,16 +10,22 @@ and dependency-aware integration.
 
 ## Status
 
-Iteration 2 — worker dispatch:
+Iteration 3 — manager wiring:
 
-- `init` wires a target repository: state dir, agent definitions, MCP registration
+- `init` wires a target repository: state dir, agent definitions (full
+  repository-manager playbook + worker contract), MCP registration with a
+  baked `--root`
 - task ledger with JSON persistence and atomic writes
-- MCP tools: `create_task`, `dispatch_task`, `task_status`, `list_tasks`, `get_task`, `cancel_task`
-- per-task git worktrees on `agent/task-NNN-slug` branches (branch reuse on re-dispatch)
-- background `opencode run` workers with `--dir` isolation, log capture, and
-  structured handoff parsing; dependency-gated dispatch
+- MCP tools over stdio (`mcp>=1.2,<2`): `create_task`, `dispatch_task`,
+  `task_status`, `list_tasks`, `get_task`, `cancel_task`
+- per-task git worktrees on `agent/task-NNN-slug` branches (branch reuse on
+  re-dispatch)
+- background `opencode run --auto --dir <worktree>` workers with log capture,
+  structured handoff parsing, dependency-gated dispatch, restart-safe registry
+- verified end-to-end: headless manager session decomposes a goal into two
+  concurrently dispatched workers and reconciles their results
 
-Manager agent wiring and PR review/integration land in later iterations.
+PR review/integration automation lands in the next iteration.
 
 ## Install
 
