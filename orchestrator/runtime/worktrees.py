@@ -7,8 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from orchestrator.config import Config, state_dir
-from orchestrator.errors import WorktreeError
+from orchestrator.core.config import Config, state_dir
+from orchestrator.core.errors import WorktreeError
 
 SLUG_MAX_LEN = 32
 

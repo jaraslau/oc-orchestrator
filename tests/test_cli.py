@@ -3,7 +3,7 @@ import json
 import pytest
 
 from orchestrator.cli import MANAGER_AGENT_FILENAME, WORKER_AGENT_FILENAME, main
-from orchestrator.ledger import TaskStatus
+from orchestrator.core.ledger import TaskStatus
 
 
 @pytest.fixture()
@@ -51,8 +51,8 @@ class TestInit:
         json.loads((repo / ".opencode" / "opencode.json").read_text())
 
     def test_init_never_clobbers_existing_ledger(self, repo):
-        from orchestrator.config import ledger_path
-        from orchestrator.ledger import Ledger
+        from orchestrator.core.config import ledger_path
+        from orchestrator.core.ledger import Ledger
 
         run(["init", str(repo)])
         lg = Ledger(ledger_path(repo))
@@ -107,8 +107,8 @@ class TestStatus:
         assert "ledger is empty" in capsys.readouterr().out
 
     def test_lists_tasks_with_branch(self, repo, capsys):
-        from orchestrator.config import ledger_path
-        from orchestrator.ledger import Ledger
+        from orchestrator.core.config import ledger_path
+        from orchestrator.core.ledger import Ledger
 
         run(["init", str(repo)])
         ledger = Ledger.load(ledger_path(repo))

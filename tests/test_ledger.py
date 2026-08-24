@@ -1,6 +1,6 @@
 import pytest
 
-from orchestrator.ledger import Ledger, Task, TaskStatus
+from orchestrator.core.ledger import Ledger, Task, TaskStatus
 
 
 @pytest.fixture()

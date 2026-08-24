@@ -1,5 +1,5 @@
-from orchestrator.config import Config
-from orchestrator.dispatcher import Dispatcher, DispatchRecord, parse_handoff
+from orchestrator.core.config import Config
+from orchestrator.runtime.dispatcher import Dispatcher, DispatchRecord, parse_handoff
 
 SAMPLE_HANDOFF = """some log noise
 ```handoff

@@ -46,7 +46,7 @@ class TestServe:
 
     def test_list_tasks_tool_roundtrip(self, tmp_path, monkeypatch):
         # init state manually via service, then call the MCP tool closure
-        from orchestrator import service
+        from orchestrator.orchestration import service
 
         service.create_task(tmp_path, title="Tool check")
         fake = FakeMCP(DEFAULT_SERVER_NAME)
@@ -57,7 +57,7 @@ class TestServe:
     def test_all_tools_delegate_to_service_no_shadowing(self, tmp_path, monkeypatch):
         # regression for TASK-003 incident: closures must call _service.*, not
         # themselves (create_task recursed into itself until fixed).
-        from orchestrator import service as service_module
+        from orchestrator.orchestration import service as service_module
 
         calls = []
         fakes = {

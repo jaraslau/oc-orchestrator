@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from orchestrator.errors import GhError
+from orchestrator.core.errors import GhError
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 

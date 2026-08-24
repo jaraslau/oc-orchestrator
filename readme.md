@@ -162,19 +162,22 @@ reconciles worker outcomes from process liveness plus log handoffs.
 
 ```
 orchestrator/
-  cli.py         argparse entry points
-  config.py      per-repo Config (+ paths)
-  ledger.py      Task dataclass, statuses, atomic JSON persistence
-  storage.py     read/write_json_atomic
-  service.py     orchestration ops shared by CLI/MCP/supervisor
-  server.py      MCP tool registration (FastMCP)
-  dispatcher.py  background spawn, registry, log capture, handoff parse
-  worktrees.py   ensure/remove per-task worktrees
-  prompts.py     delegation prompt rendering
-  llm.py         synchronous opencode wrapper (planner/reviewer)
-  supervisor.py  run_goal control loop, plan parsing, gates, integration
-  review.py      GhClient over the gh CLI
-  errors.py      typed exceptions
+  cli.py                    argparse entry points
+  server.py                 MCP tool registration (FastMCP)
+  core/
+    config.py               per-repo Config (+ paths)
+    ledger.py               Task dataclass, statuses, atomic JSON persistence
+    storage.py              read/write_json_atomic
+    errors.py               typed exceptions
+  runtime/
+    dispatcher.py           background spawn, registry, log capture, handoff parse
+    worktrees.py            ensure/remove per-task worktrees
+    llm.py                  synchronous opencode wrapper (planner/reviewer)
+    github.py               GhClient over the gh CLI
+  orchestration/
+    prompts.py              delegation prompt rendering
+    service.py              operations shared by CLI/MCP/supervisor
+    supervisor.py           run_goal control loop, planning, gates, integration
 ```
 
 Worker isolation model: one branch + one worktree per task under

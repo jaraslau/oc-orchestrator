@@ -10,10 +10,10 @@ from importlib import resources
 from pathlib import Path
 
 from orchestrator import __version__
-from orchestrator.config import ledger_path, load_config, save_config
-from orchestrator.ledger import Ledger
+from orchestrator.core.config import ledger_path, load_config, save_config
+from orchestrator.core.ledger import Ledger
+from orchestrator.core.storage import read_json, write_json_atomic
 from orchestrator.server import run_serve
-from orchestrator.storage import read_json, write_json_atomic
 
 OPENCODE_DIRNAME = ".opencode"
 OPENCODE_CONFIG_FILENAME = "opencode.json"
@@ -155,7 +155,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    from orchestrator.service import generate_report
+    from orchestrator.orchestration.service import generate_report
 
     root = args.path.resolve()
     path = root / ".orchestrator" / "ledger.json"
@@ -167,7 +167,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from orchestrator.supervisor import run_goal
+    from orchestrator.orchestration.supervisor import run_goal
 
     root = args.path.resolve()
     if not (root / ".orchestrator").exists():

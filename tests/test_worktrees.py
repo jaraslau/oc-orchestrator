@@ -1,8 +1,8 @@
 import pytest
 
-from orchestrator.config import Config
-from orchestrator.errors import WorktreeError
-from orchestrator.worktrees import (
+from orchestrator.core.config import Config
+from orchestrator.core.errors import WorktreeError
+from orchestrator.runtime.worktrees import (
     branch_exists,
     branch_name,
     ensure_worktree,

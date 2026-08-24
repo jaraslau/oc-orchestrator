@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from orchestrator.config import Config, ledger_path
-from orchestrator.ledger import Ledger, TaskStatus
-from orchestrator.supervisor import (
+from orchestrator.core.config import Config, ledger_path
+from orchestrator.core.ledger import Ledger, TaskStatus
+from orchestrator.orchestration.supervisor import (
     PlannedTask,
     PlanningError,
     extract_json_block,
@@ -164,14 +164,14 @@ class TestRunGoal:
     def test_planned_model_flows_to_dispatch_command(self, fast_factory):
         from unittest.mock import patch
 
-        import orchestrator.dispatcher as dispatcher_mod
+        import orchestrator.runtime.dispatcher as dispatcher_mod
 
         recorded = {}
         original = dispatcher_mod.Dispatcher.__dict__["build_command"]
 
-        def spy(config, worktree, prompt, model=None, agent_name=None):
+        def spy(config, worktree, prompt, model=None, agent_name=None, variant=None):
             recorded["model"] = model
-            return original.__func__(config, worktree, prompt, model, agent_name)
+            return original.__func__(config, worktree, prompt, model, agent_name, variant)
 
         with patch.object(dispatcher_mod.Dispatcher, "build_command", staticmethod(spy)):
             plans = [PlannedTask(title="Heavy lift", model="anthropic/opus")]

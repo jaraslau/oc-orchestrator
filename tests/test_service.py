@@ -1,9 +1,9 @@
 import pytest
 
-from orchestrator import service
-from orchestrator.config import load_config
-from orchestrator.errors import DispatchBlocked, InvalidState
-from orchestrator.ledger import Ledger, TaskStatus
+from orchestrator.core.config import load_config
+from orchestrator.core.errors import DispatchBlocked, InvalidState
+from orchestrator.core.ledger import Ledger, TaskStatus
+from orchestrator.orchestration import service
 from tests.conftest import HANDOFF_FAIL, HANDOFF_OK, configured, wait_until
 
 

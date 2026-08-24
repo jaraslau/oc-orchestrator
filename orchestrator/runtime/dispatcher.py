@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from orchestrator.config import Config, state_dir
-from orchestrator.storage import read_json, write_json_atomic
+from orchestrator.core.config import Config, state_dir
+from orchestrator.core.storage import read_json, write_json_atomic
 
 DISPATCHES_FILENAME = "dispatches.json"
 HANDOFF_RE = re.compile(r"```handoff\s*\n(.*?)```", re.DOTALL)
@@ -83,10 +83,13 @@ class Dispatcher:
         prompt: str,
         model: str | None = None,
         agent_name: str | None = None,
+        variant: str | None = None,
     ) -> list[str]:
         cmd = [config.opencode_bin, "run", "--auto", "--dir", str(worktree)]
         if model:
             cmd += ["-m", model]
+        if variant:
+            cmd += ["--variant", variant]
         cmd += ["--agent", agent_name or config.worker_agent, prompt]
         return cmd
 
@@ -100,12 +103,13 @@ class Dispatcher:
         prompt: str,
         model: str | None = None,
         agent_name: str | None = None,
+        variant: str | None = None,
     ) -> DispatchRecord:
         logs_dir = state_dir(self.root) / config.logs_dirname
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = logs_dir / f"{task_id.lower()}.log"
 
-        cmd = self.build_command(config, worktree, prompt, model, agent_name)
+        cmd = self.build_command(config, worktree, prompt, model, agent_name, variant)
 
         with log_path.open("wb") as log:
             proc = subprocess.Popen(

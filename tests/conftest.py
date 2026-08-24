@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from orchestrator.config import Config, save_config
+from orchestrator.core.config import Config, save_config
 
 
 @pytest.fixture()

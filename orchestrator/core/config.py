@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from orchestrator.storage import read_json, write_json_atomic
+from orchestrator.core.storage import read_json, write_json_atomic
 
 STATE_DIRNAME = ".orchestrator"
 CONFIG_FILENAME = "config.json"

@@ -9,17 +9,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from orchestrator.config import Config, ledger_path, load_config
-from orchestrator.errors import DispatchBlocked
-from orchestrator.ledger import Ledger, TaskStatus
-from orchestrator.llm import LlmRunner, run_llm
-from orchestrator.service import (
+from orchestrator.core.config import Config, ledger_path, load_config
+from orchestrator.core.errors import DispatchBlocked
+from orchestrator.core.ledger import Ledger, TaskStatus
+from orchestrator.orchestration.service import (
     cleanup_worktree,
     create_task,
     dispatch_task,
     generate_report,
     task_status,
 )
+from orchestrator.runtime.llm import LlmRunner, run_llm
 
 Io = Callable[[str], None]
 GateRunner = Callable[[Path, Config], tuple[bool, str]]
@@ -42,6 +42,7 @@ class PlannedTask:
     depends_on: list[str] = field(default_factory=list)
     role: str | None = None
     model: str | None = None
+    effort: str | None = None
 
 
 PLAN_PROMPT = """You are the planning module of an autonomous repo orchestrator.
@@ -60,6 +61,11 @@ Rules:
   orchestrator-reviewer. Set role only when it clearly fits.
 - model is optional; set it only when a task clearly needs more or less
   capability than the default.
+- effort is the reasoning effort for the worker (provider-specific variant,
+  e.g. high, medium, low, minimal). Choose it per task: high for tricky
+  architecture, debugging, or security work; medium for standard features;
+  low/minimal for mechanical chores (renames, formatting, boilerplate).
+  Omit when unsure.
 
 Respond with ONLY a fenced JSON block, no other text:
 ```json
@@ -108,6 +114,7 @@ def parse_plan(text: str) -> list[PlannedTask]:
                 depends_on=deps,
                 role=rt.get("role") or None,
                 model=rt.get("model") or None,
+                effort=rt.get("effort") or None,
             )
         )
     return plans
@@ -142,6 +149,7 @@ def create_planned_tasks(root: Path, plans: list[PlannedTask]) -> list[str]:
             dependencies=[title_to_id[d] for d in p.depends_on],
             role=p.role,
             model=p.model,
+            effort=p.effort,
         )
         title_to_id[p.title] = data["id"]
         ids.append(data["id"])
@@ -195,7 +203,10 @@ def llm_review(task: dict, diff: str, gate_ok: bool, gate_output: str) -> tuple[
     )
     root = Path(task["_root"])
     config = load_config(root)
-    text = run_llm(root, config, prompt, config.reviewer_model, agent="orchestrator-reviewer")
+    text = run_llm(
+        root, config, prompt, config.reviewer_model, agent="orchestrator-reviewer",
+        effort=task.get("effort"),
+    )
     line = next((ln for ln in reversed(text.strip().splitlines()) if ln.strip()), "")
     line = line.strip().strip("`")
     try:
@@ -329,7 +340,7 @@ def run_goal(
 
 
 def _worktree_path(root: Path, config: Config, branch: str) -> Path:
-    from orchestrator.worktrees import worktree_path
+    from orchestrator.runtime.worktrees import worktree_path
 
     return worktree_path(root, config, branch)
 

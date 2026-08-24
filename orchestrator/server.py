@@ -6,8 +6,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from orchestrator import errors
-from orchestrator import service as _service
+from orchestrator.core import errors
+from orchestrator.orchestration import service as _service
 
 DEFAULT_SERVER_NAME = "oc-orchestrator"
 

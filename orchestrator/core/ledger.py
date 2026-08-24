@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from orchestrator.storage import read_json, write_json_atomic
+from orchestrator.core.storage import read_json, write_json_atomic
 
 TASK_ID_RE = re.compile(r"^TASK-(\d{3,})$")
 
@@ -46,6 +46,7 @@ class Task:
     handoff: dict[str, str] | None = None
     role: str | None = None
     model: str | None = None
+    effort: str | None = None
     risks: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
@@ -100,6 +101,7 @@ class Ledger:
         agent: str | None = None,
         branch: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
         risks: list[str] | None = None,
     ) -> Task:
         deps = dependencies or []
@@ -115,6 +117,7 @@ class Ledger:
             agent=agent,
             branch=branch,
             model=model,
+            effort=effort,
             risks=risks or [],
         )
         self.tasks[task.id] = task

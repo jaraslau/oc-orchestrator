@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from orchestrator.config import Config, ledger_path, load_config
-from orchestrator.dispatcher import Dispatcher, DispatchRecord, parse_handoff, wait_for_completion
-from orchestrator.errors import DispatchBlocked, InvalidState, TaskNotFound
-from orchestrator.ledger import Ledger, Task, TaskStatus
-from orchestrator.prompts import render_delegation
-from orchestrator.review import GhClient, pr_number_from_url
-from orchestrator.worktrees import branch_name, ensure_worktree, remove_worktree
+from orchestrator.core.config import Config, ledger_path, load_config
+from orchestrator.core.errors import DispatchBlocked, InvalidState, TaskNotFound
+from orchestrator.core.ledger import Ledger, Task, TaskStatus
+from orchestrator.orchestration.prompts import render_delegation
+from orchestrator.runtime.dispatcher import (
+    Dispatcher,
+    DispatchRecord,
+    parse_handoff,
+    wait_for_completion,
+)
+from orchestrator.runtime.github import GhClient, pr_number_from_url
+from orchestrator.runtime.worktrees import branch_name, ensure_worktree, remove_worktree
 
 _TERMINAL_STATUSES = {TaskStatus.MERGED, TaskStatus.CANCELLED}
 
@@ -35,6 +40,7 @@ def create_task(
     risks: list[str] | None = None,
     role: str | None = None,
     model: str | None = None,
+    effort: str | None = None,
 ) -> dict:
     config = load_config(root)
     ledger = Ledger.load(ledger_path(root))
@@ -45,6 +51,7 @@ def create_task(
         dependencies=dependencies,
         risks=risks,
         model=model,
+        effort=effort,
     )
     if role:
         _validate_agent(root, role)
@@ -86,6 +93,7 @@ def dispatch_task(
     model: str | None = None,
     instructions: str | None = None,
     role: str | None = None,
+    effort: str | None = None,
 ) -> dict:
     root = Path(root)
     config = load_config(root)
@@ -118,6 +126,7 @@ def dispatch_task(
         prompt=prompt,
         model=model or task.model or config.worker_model,
         agent_name=agent_name,
+        variant=effort or task.effort,
     )
     task.agent = agent_name
     ledger.update_status(task.id, TaskStatus.DISPATCHED)

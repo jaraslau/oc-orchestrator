@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from orchestrator.config import Config
-from orchestrator.ledger import Task
+from orchestrator.core.config import Config
+from orchestrator.core.ledger import Task
 
 HANDOFF_TEMPLATE = """\
 ```handoff

@@ -1,10 +1,10 @@
 import pytest
 
-from orchestrator import service
-from orchestrator.config import Config
-from orchestrator.dispatcher import Dispatcher
-from orchestrator.errors import InvalidState
-from orchestrator.ledger import Ledger
+from orchestrator.core.config import Config
+from orchestrator.core.errors import InvalidState
+from orchestrator.core.ledger import Ledger
+from orchestrator.orchestration import service
+from orchestrator.runtime.dispatcher import Dispatcher
 from tests.conftest import HANDOFF_OK, configured
 
 
@@ -71,7 +71,7 @@ class TestRoleAssignment:
         assert cmd[cmd.index("--agent") + 1] == "orchestrator-reviewer"
 
     def test_prompt_greets_resolved_role(self, repo):
-        from orchestrator.prompts import render_delegation
+        from orchestrator.orchestration.prompts import render_delegation
 
         data = service.create_task(repo, title="T")
         task = Ledger.load(repo / ".orchestrator" / "ledger.json").get(data["id"])

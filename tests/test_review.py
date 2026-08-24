@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator import service
-from orchestrator.errors import DispatchBlocked, GhError, InvalidState
-from orchestrator.ledger import Ledger, TaskStatus
-from orchestrator.review import GhClient, pr_number_from_url
+from orchestrator.core.errors import DispatchBlocked, GhError, InvalidState
+from orchestrator.core.ledger import Ledger, TaskStatus
+from orchestrator.orchestration import service
+from orchestrator.runtime.github import GhClient, pr_number_from_url
 
 
 def make_runner(handler, calls=None):
@@ -265,8 +265,8 @@ class TestReport:
 
 class TestDispatchInstructions:
     def test_render_delegation_includes_extra_instructions(self, repo):
-        from orchestrator.config import load_config
-        from orchestrator.prompts import render_delegation
+        from orchestrator.core.config import load_config
+        from orchestrator.orchestration.prompts import render_delegation
 
         data = service.create_task(repo, title="Fix bug")
         task = Ledger.load(repo / ".orchestrator" / "ledger.json").get(data["id"])

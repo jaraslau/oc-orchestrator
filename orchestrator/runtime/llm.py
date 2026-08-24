@@ -6,7 +6,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from orchestrator.config import Config
+from orchestrator.core.config import Config
 
 LlmRunner = Callable[[Path, Config, str, str | None, str | None], str]
 
@@ -20,10 +20,13 @@ def run_llm(
     model: str | None = None,
     agent: str | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    effort: str | None = None,
 ) -> str:
     cmd = [config.opencode_bin, "run", "--auto", "--dir", str(root)]
     if model:
         cmd += ["-m", model]
+    if effort:
+        cmd += ["--variant", effort]
     if agent:
         cmd += ["--agent", agent]
     cmd.append(prompt)

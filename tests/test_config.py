@@ -1,6 +1,6 @@
 import pytest
 
-from orchestrator.config import Config, load_config, save_config
+from orchestrator.core.config import Config, load_config, save_config
 
 
 class TestConfig:
