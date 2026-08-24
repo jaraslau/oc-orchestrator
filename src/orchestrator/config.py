@@ -22,6 +22,7 @@ class Config:
     manager_agent: str = "orchestrator-manager"
     worker_agent: str = "orchestrator-worker"
     worker_model: str | None = None
+    opencode_bin: str = "opencode"
 
 
 def state_dir(root: Path) -> Path:

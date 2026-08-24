@@ -10,13 +10,16 @@ and dependency-aware integration.
 
 ## Status
 
-Iteration 1 — foundations:
+Iteration 2 — worker dispatch:
 
 - `init` wires a target repository: state dir, agent definitions, MCP registration
 - task ledger with JSON persistence and atomic writes
-- MCP server skeleton (`serve`) exposing a health-check tool
+- MCP tools: `create_task`, `dispatch_task`, `task_status`, `list_tasks`, `get_task`, `cancel_task`
+- per-task git worktrees on `agent/task-NNN-slug` branches (branch reuse on re-dispatch)
+- background `opencode run` workers with `--dir` isolation, log capture, and
+  structured handoff parsing; dependency-gated dispatch
 
-Worker dispatch, manager wiring, and PR review/integration land in later iterations.
+Manager agent wiring and PR review/integration land in later iterations.
 
 ## Install
 

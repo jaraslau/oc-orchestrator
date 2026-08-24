@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -43,6 +43,7 @@ class Task:
     branch: str | None = None
     pr: str | None = None
     last_result: str | None = None
+    handoff: dict[str, str] | None = None
     risks: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
@@ -70,11 +71,12 @@ class Ledger:
         if not path.exists():
             return cls(path)
         data = read_json(path)
+        known_fields = {f.name for f in fields(Task)}
         tasks: dict[str, Task] = {}
         for raw in data.get("tasks", []):
-            fields = dict(raw)
-            fields["status"] = _coerce_status(fields.get("status"))
-            task = Task(**fields)
+            fields_dict = dict(raw)
+            fields_dict["status"] = _coerce_status(fields_dict.get("status"))
+            task = Task(**{k: v for k, v in fields_dict.items() if k in known_fields})
             tasks[task.id] = task
         return cls(path, tasks)
 
