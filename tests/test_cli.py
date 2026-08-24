@@ -3,6 +3,7 @@ import json
 import pytest
 
 from orchestrator.cli import MANAGER_AGENT_FILENAME, WORKER_AGENT_FILENAME, main
+from orchestrator.ledger import TaskStatus
 
 
 @pytest.fixture()
@@ -27,8 +28,9 @@ class TestInit:
         opencode_cfg = json.loads((repo / ".opencode" / "opencode.json").read_text())
         assert opencode_cfg["$schema"].startswith("https://")
         entry = opencode_cfg["mcp"]["oc-orchestrator"]
-        # regression: root must be baked in; opencode may spawn servers from any cwd
-        assert entry["command"] == ["oc-orchestrator", "serve", "--root", str(repo)]
+        # regression: generated config must be machine-independent (no absolute paths)
+        assert entry["command"] == ["oc-orchestrator", "serve"]
+        assert str(repo) not in json.dumps(opencode_cfg)
         assert entry["enabled"] is True
         manager_md = (repo / ".opencode" / "agent" / MANAGER_AGENT_FILENAME).read_text()
         worker_md = (repo / ".opencode" / "agent" / WORKER_AGENT_FILENAME).read_text()
@@ -47,6 +49,21 @@ class TestInit:
         gitignore = (repo / ".gitignore").read_text()
         assert gitignore.count(".orchestrator/") == 1
         json.loads((repo / ".opencode" / "opencode.json").read_text())
+
+    def test_init_never_clobbers_existing_ledger(self, repo):
+        from orchestrator.config import ledger_path
+        from orchestrator.ledger import Ledger
+
+        run(["init", str(repo)])
+        lg = Ledger(ledger_path(repo))
+        t = lg.create_task("precious history")
+        lg.update_status(t.id, TaskStatus.REVIEWING)
+        lg.save()
+
+        rc = run(["init", str(repo)])
+        assert rc == 0
+        restored = Ledger.load(ledger_path(repo)).get(t.id)
+        assert restored.status == TaskStatus.REVIEWING
 
     def test_preserves_existing_opencode_config(self, repo):
         cfg_dir = repo / ".opencode"
