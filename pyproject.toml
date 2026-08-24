@@ -4,15 +4,17 @@ version = "0.1.0"
 description = "OpenCode-backed multi-agent repository orchestrator"
 authors = [{ name = "jaraslau" }]
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+requires-poetry = ">=2.0"
 dependencies = ["mcp>=1.2,<2"]
+
+[project.scripts]
+oc-orchestrator = "orchestrator.cli:main"
 
 [tool.poetry]
 packages = [{ include = "orchestrator" }]
 include = [{ path = "orchestrator/agents/**/*.md", format = ["sdist", "wheel"] }]
-
-[tool.poetry.scripts]
-oc-orchestrator = "orchestrator.cli:main"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"
