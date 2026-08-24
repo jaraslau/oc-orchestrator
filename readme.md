@@ -10,22 +10,17 @@ and dependency-aware integration.
 
 ## Status
 
-Iteration 3 — manager wiring:
+Iteration 4 — review & integration:
 
-- `init` wires a target repository: state dir, agent definitions (full
-  repository-manager playbook + worker contract), MCP registration with a
-  baked `--root`
-- task ledger with JSON persistence and atomic writes
-- MCP tools over stdio (`mcp>=1.2,<2`): `create_task`, `dispatch_task`,
-  `task_status`, `list_tasks`, `get_task`, `cancel_task`
-- per-task git worktrees on `agent/task-NNN-slug` branches (branch reuse on
-  re-dispatch)
-- background `opencode run --auto --dir <worktree>` workers with log capture,
-  structured handoff parsing, dependency-gated dispatch, restart-safe registry
-- verified end-to-end: headless manager session decomposes a goal into two
-  concurrently dispatched workers and reconciles their results
+- everything from iterations 1–3 (ledger, dispatch, MCP manager wiring)
+- GitHub review layer via `gh`: `open_pr`, `pr_diff`, `request_changes`,
+  `merge_task` (dependency-aware, squash default), `list_open_prs`
+- changes-requested re-dispatch loop: `dispatch_task(task_id, instructions=...)`
+  reuses the same branch/worktree and injects corrections into the prompt
+- `oc-orchestrator report` / `project_report` tool: completion summary
+- verified end-to-end incl. one full changes-requested cycle
 
-PR review/integration automation lands in the next iteration.
+Requires `gh auth login` once for live GitHub operations.
 
 ## Install
 

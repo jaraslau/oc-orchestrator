@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from orchestrator.config import ledger_path, load_config
+from orchestrator.config import Config, ledger_path, load_config
 from orchestrator.dispatcher import Dispatcher, DispatchRecord, parse_handoff, wait_for_completion
 from orchestrator.errors import DispatchBlocked, InvalidState, TaskNotFound
 from orchestrator.ledger import Ledger, Task, TaskStatus
 from orchestrator.prompts import render_delegation
+from orchestrator.review import GhClient, pr_number_from_url
 from orchestrator.worktrees import branch_name, ensure_worktree, remove_worktree
 
 _TERMINAL_STATUSES = {TaskStatus.MERGED, TaskStatus.CANCELLED}
@@ -56,7 +57,9 @@ def get_task(root: Path, task_id: str) -> dict:
     return _load_ledger(root).get(task_id).to_dict()
 
 
-def dispatch_task(root: Path, task_id: str, model: str | None = None) -> dict:
+def dispatch_task(
+    root: Path, task_id: str, model: str | None = None, instructions: str | None = None
+) -> dict:
     root = Path(root)
     config = load_config(root)
     ledger = _load_ledger(root)
@@ -74,7 +77,7 @@ def dispatch_task(root: Path, task_id: str, model: str | None = None) -> dict:
 
     worktree, branch = ensure_worktree(root, config, task.id, task.title, task.branch)
     task.branch = branch
-    prompt = render_delegation(config, task)
+    prompt = render_delegation(config, task, extra_instructions=instructions)
 
     dispatcher = get_dispatcher(root)
     record = dispatcher.spawn(
@@ -196,3 +199,157 @@ def _record_dict(record: DispatchRecord | None) -> dict | None:
             "worktree": record.worktree,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Review & integration (GitHub via gh)
+# ---------------------------------------------------------------------------
+
+_PR_ELIGIBLE = {TaskStatus.REVIEWING, TaskStatus.READY_TO_MERGE, TaskStatus.CHANGES_REQUESTED}
+
+
+def _client(root: Path, config: Config, gh_runner=None) -> GhClient:
+    return GhClient(root, gh_bin=config.gh_bin, runner=gh_runner)
+
+
+def _default_pr_body(task: Task) -> str:
+    lines = [f"Closes out {task.id} - {task.title}."]
+    if task.objective:
+        lines += ["", "## Objective", task.objective]
+    if task.acceptance_criteria:
+        lines += ["", "## Acceptance criteria"]
+        lines += [f"- {c}" for c in task.acceptance_criteria]
+    handoff = task.handoff or {}
+    if handoff.get("SUMMARY"):
+        lines += ["", "## Worker summary", handoff["SUMMARY"]]
+    if handoff.get("KNOWN ISSUES") and handoff["KNOWN ISSUES"].lower() != "none":
+        lines += ["", "## Known issues", handoff["KNOWN ISSUES"]]
+    return "\n".join(lines) + "\n"
+
+
+def open_pr(
+    root: Path,
+    task_id: str,
+    title: str | None = None,
+    body: str | None = None,
+    gh_runner=None,
+) -> dict:
+    root = Path(root)
+    config = load_config(root)
+    ledger = _load_ledger(root)
+    task = ledger.get(task_id)
+    if task.status not in _PR_ELIGIBLE:
+        raise InvalidState(f"{task_id} is {task.status.value}; open_pr requires REVIEWING first")
+    if task.branch is None:
+        raise InvalidState(f"{task_id} has no branch assigned")
+
+    client = _client(root, config, gh_runner)
+    client.check()
+    pr = client.find_by_head(task.branch)
+    if pr is None:
+        pr = client.create_pr(
+            base=config.primary_branch,
+            head=task.branch,
+            title=title or f"{task.id}: {task.title}",
+            body=body or _default_pr_body(task),
+        )
+    task.pr = pr.url
+    if task.status == TaskStatus.REVIEWING:
+        ledger.update_status(task_id, TaskStatus.PR_OPEN)
+    ledger.save()
+    return {"task": task.to_dict(), "pr": {"number": pr.number, "url": pr.url}}
+
+
+def request_changes(root: Path, task_id: str, comment: str, gh_runner=None) -> dict:
+    root = Path(root)
+    config = load_config(root)
+    ledger = _load_ledger(root)
+    task = ledger.get(task_id)
+    if task.status in _TERMINAL_STATUSES:
+        raise InvalidState(f"{task_id} is already {task.status.value}")
+
+    posted = False
+    if task.pr:
+        number = pr_number_from_url(task.pr)
+        if number is not None:
+            client = _client(root, config, gh_runner)
+            client.comment(number, f"[oc-orchestrator] Changes requested:\n\n{comment}")
+            posted = True
+
+    task.last_result = f"changes requested: {comment}"
+    ledger.update_status(task_id, TaskStatus.CHANGES_REQUESTED)
+    ledger.save()
+    return {"task": task.to_dict(), "posted_to_pr": posted}
+
+
+def merge_task(root: Path, task_id: str, gh_runner=None) -> dict:
+    root = Path(root)
+    config = load_config(root)
+    ledger = _load_ledger(root)
+    task = ledger.get(task_id)
+
+    if task.status in {TaskStatus.MERGED, TaskStatus.CANCELLED}:
+        raise InvalidState(f"{task_id} is already {task.status.value}")
+    unmet = [
+        dep
+        for dep in task.dependencies
+        if (dep_task := _find(ledger, dep)) is None or dep_task.status != TaskStatus.MERGED
+    ]
+    if unmet:
+        raise DispatchBlocked(
+            f"cannot merge {task_id}; dependencies not merged: {', '.join(unmet)}"
+        )
+    if not task.pr:
+        raise InvalidState(f"{task_id} has no pull request; call open_pr first")
+
+    number = pr_number_from_url(task.pr)
+    if number is None:
+        raise InvalidState(f"cannot parse PR number from {task.pr}")
+    client = _client(root, config, gh_runner)
+    client.merge(number, method=config.merge_method)
+    ledger.update_status(task_id, TaskStatus.MERGED)
+    task.last_result = f"merged PR #{number}"
+    remove_worktree(root, config, task.branch or "")
+    ledger.save()
+    return task.to_dict()
+
+
+def pr_diff(root: Path, task_id: str, gh_runner=None) -> str:
+    root = Path(root)
+    config = load_config(root)
+    task = _load_ledger(root).get(task_id)
+    if not task.pr:
+        raise InvalidState(f"{task_id} has no pull request; call open_pr first")
+    number = pr_number_from_url(task.pr)
+    if number is None:
+        raise InvalidState(f"cannot parse PR number from {task.pr}")
+    return _client(root, config, gh_runner).pr_diff(number)
+
+
+def list_open_prs(root: Path, gh_runner=None) -> list[dict]:
+    root = Path(root)
+    config = load_config(root)
+    client = _client(root, config, gh_runner)
+    return [
+        {"number": p.number, "url": p.url, "head": p.head, "title": p.title, "state": p.state}
+        for p in client.list_prs()
+    ]
+
+
+def generate_report(root: Path) -> str:
+    """Human-facing project report in the playbook's completion format."""
+    ledger = Ledger.load(ledger_path(Path(root)))
+    tasks = ledger.filter()
+    merged = [t for t in tasks if t.status == TaskStatus.MERGED]
+    active = [t for t in tasks if t.status not in {TaskStatus.MERGED, TaskStatus.CANCELLED}]
+    attention = [t for t in active if t.status in {TaskStatus.FAILED, TaskStatus.BLOCKED}]
+    lines = ["PROJECT REPORT", ""]
+    lines.append(f"Merged ({len(merged)}):")
+    lines += [f"- {t.id} {t.title} [{t.last_result or ''}]" for t in merged] or ["- (none)"]
+    lines.append("")
+    lines.append(f"Open/active ({len(active)}):")
+    lines += [f"- {t.id} {t.status.value:<17} {t.branch or '-'}" for t in active] or ["- (none)"]
+    if attention:
+        lines += ["", "Needs attention:"]
+        lines += [f"- {t.id}: {t.last_result or 'no result recorded'}" for t in attention]
+    return "\n".join(lines)

@@ -55,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("status", help="show the task ledger")
     p_status.add_argument("path", nargs="?", default=".", type=Path)
 
+    p_report = sub.add_parser("report", help="project completion report from the ledger")
+    p_report.add_argument("path", nargs="?", default=".", type=Path)
+
     return parser
 
 
@@ -64,6 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "init": cmd_init,
         "serve": cmd_serve,
         "status": cmd_status,
+        "report": cmd_report,
     }
     return handlers[args.command](args)
 
@@ -131,6 +135,18 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"{'ID':<{width}}  {'STATUS':<17} BRANCH")
     for t in rows:
         print(f"{t.id:<{width}}  {t.status.value:<17} {t.branch or '-'}")
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    from orchestrator.service import generate_report
+
+    root = args.path.resolve()
+    path = root / ".orchestrator" / "ledger.json"
+    if not path.exists():
+        print(f"no ledger found at {path}; run 'oc-orchestrator init' first", file=sys.stderr)
+        return 1
+    print(generate_report(root))
     return 0
 
 
