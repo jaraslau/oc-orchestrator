@@ -1,3 +1,50 @@
-oc-orchestrator
+# oc-orchestrator
 
-OpenCode-backed orchestrator for my projects
+OpenCode-backed orchestrator for my projects.
+
+oc-orchestrator coordinates multiple autonomous coding agents working
+concurrently in isolated git branches/worktrees. An LLM "manager" agent
+decomposes a goal into tasks; deterministic tooling owns the task ledger,
+worker dispatch (`opencode run` in per-task worktrees), review plumbing,
+and dependency-aware integration.
+
+## Status
+
+Iteration 1 — foundations:
+
+- `init` wires a target repository: state dir, agent definitions, MCP registration
+- task ledger with JSON persistence and atomic writes
+- MCP server skeleton (`serve`) exposing a health-check tool
+
+Worker dispatch, manager wiring, and PR review/integration land in later iterations.
+
+## Install
+
+Requires Python 3.12+ and [Poetry](https://python-poetry.org/).
+
+```sh
+poetry install
+```
+
+## Usage
+
+```sh
+# wire up a target repository
+poetry run oc-orchestrator init /path/to/project
+
+# inspect its ledger
+poetry run oc-orchestrator status /path/to/project
+
+# run the MCP server (stdio)
+poetry run oc-orchestrator serve
+
+# smoke test the CLI
+poetry run oc-orchestrator --version
+```
+
+## Development
+
+```sh
+poetry run pytest        # tests
+poetry run ruff check .  # lint
+```

@@ -1,0 +1,18 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+
+# tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# os
+.DS_Store
+
+# orchestrator state (written by oc-orchestrator init into target repos)
+.orchestrator/
