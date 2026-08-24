@@ -10,22 +10,18 @@ and dependency-aware integration.
 
 ## Status
 
-Iteration 5 — role assignment:
+Iterations 1–5 complete:
 
-- everything from iterations 1–4
-- per-task worker roles: `create_task(role=...)`, `dispatch_task(role=...)`
-- resolution order: dispatch override > task role > default worker; missing
-  agent definitions fail fast at create/dispatch time
-- built-in role templates installed by `init`: `orchestrator-tester`,
-  `orchestrator-reviewer` (+ default `orchestrator-worker`)
-- custom roles: drop any `.md` into `.opencode/agent/` and reference its stem
-- verified: 92 tests green, MCP surface smoke-checked
+- foundations: task ledger and CLI
+- worker dispatch: isolated per-task git worktrees, background workers
+- manager wiring: playbook agents, MCP tools
+- review & integration: `gh` PR layer, changes-requested loop, reports
+- role assignment: built-in roles `orchestrator-tester` and
+  `orchestrator-reviewer`; custom roles via `.opencode/agent/`
 
-Requires `gh auth login` once for live GitHub operations.
-
-Earlier iterations: foundations (ledger, CLI), worker dispatch (worktrees,
-background workers), manager wiring (playbook agents, MCP tools), review &
-integration (gh PR layer, changes-requested loop, reports).
+The package lives at `orchestrator/` at the repo root. CI runs tests and
+lint via a GitHub Actions workflow. Requires a one-time `gh auth login`
+for live GitHub operations.
 
 ## Install
 
