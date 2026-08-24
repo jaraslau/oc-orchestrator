@@ -204,7 +204,11 @@ def llm_review(task: dict, diff: str, gate_ok: bool, gate_output: str) -> tuple[
     root = Path(task["_root"])
     config = load_config(root)
     text = run_llm(
-        root, config, prompt, config.reviewer_model, agent="orchestrator-reviewer",
+        root,
+        config,
+        prompt,
+        config.reviewer_model,
+        agent="orchestrator-reviewer",
         effort=task.get("effort"),
     )
     line = next((ln for ln in reversed(text.strip().splitlines()) if ln.strip()), "")
