@@ -35,6 +35,9 @@ class TestInit:
         assert "Repository Manager Agent" in manager_md
         assert "dispatch_task" in manager_md
         assert "```handoff" in worker_md
+        roles_dir = repo / ".opencode" / "agent"
+        assert (roles_dir / "orchestrator-tester.md").exists()
+        assert (roles_dir / "orchestrator-reviewer.md").exists()
         assert "initialized orchestration state" in out
 
     def test_idempotent_rerun(self, repo):

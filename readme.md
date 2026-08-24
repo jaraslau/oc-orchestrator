@@ -10,17 +10,22 @@ and dependency-aware integration.
 
 ## Status
 
-Iteration 4 — review & integration:
+Iteration 5 — role assignment:
 
-- everything from iterations 1–3 (ledger, dispatch, MCP manager wiring)
-- GitHub review layer via `gh`: `open_pr`, `pr_diff`, `request_changes`,
-  `merge_task` (dependency-aware, squash default), `list_open_prs`
-- changes-requested re-dispatch loop: `dispatch_task(task_id, instructions=...)`
-  reuses the same branch/worktree and injects corrections into the prompt
-- `oc-orchestrator report` / `project_report` tool: completion summary
-- verified end-to-end incl. one full changes-requested cycle
+- everything from iterations 1–4
+- per-task worker roles: `create_task(role=...)`, `dispatch_task(role=...)`
+- resolution order: dispatch override > task role > default worker; missing
+  agent definitions fail fast at create/dispatch time
+- built-in role templates installed by `init`: `orchestrator-tester`,
+  `orchestrator-reviewer` (+ default `orchestrator-worker`)
+- custom roles: drop any `.md` into `.opencode/agent/` and reference its stem
+- verified: 92 tests green, MCP surface smoke-checked
 
 Requires `gh auth login` once for live GitHub operations.
+
+Earlier iterations: foundations (ledger, CLI), worker dispatch (worktrees,
+background workers), manager wiring (playbook agents, MCP tools), review &
+integration (gh PR layer, changes-requested loop, reports).
 
 ## Install
 

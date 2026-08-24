@@ -82,11 +82,12 @@ class Dispatcher:
         worktree: Path,
         prompt: str,
         model: str | None = None,
+        agent_name: str | None = None,
     ) -> list[str]:
         cmd = [config.opencode_bin, "run", "--auto", "--dir", str(worktree)]
         if model:
             cmd += ["-m", model]
-        cmd += ["--agent", config.worker_agent, prompt]
+        cmd += ["--agent", agent_name or config.worker_agent, prompt]
         return cmd
 
     def spawn(
@@ -98,12 +99,13 @@ class Dispatcher:
         worktree: Path,
         prompt: str,
         model: str | None = None,
+        agent_name: str | None = None,
     ) -> DispatchRecord:
         logs_dir = state_dir(self.root) / config.logs_dirname
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = logs_dir / f"{task_id.lower()}.log"
 
-        cmd = self.build_command(config, worktree, prompt, model)
+        cmd = self.build_command(config, worktree, prompt, model, agent_name)
 
         with log_path.open("wb") as log:
             proc = subprocess.Popen(

@@ -33,6 +33,7 @@ def create_task(
     acceptance_criteria: list[str] | None = None,
     dependencies: list[str] | None = None,
     risks: list[str] | None = None,
+    role: str | None = None,
 ) -> dict:
     config = load_config(root)
     ledger = Ledger.load(ledger_path(root))
@@ -43,9 +44,29 @@ def create_task(
         dependencies=dependencies,
         risks=risks,
     )
+    if role:
+        _validate_agent(root, role)
+        task.role = role
     task.branch = branch_name(config, task.id, title)
     ledger.save()
     return task.to_dict()
+
+
+def _validate_agent(root: Path, name: str) -> Path:
+    path = Path(root) / ".opencode" / "agent" / f"{name}.md"
+    if not path.exists():
+        raise InvalidState(
+            f"agent definition not found: {path}; "
+            "use a built-in role (orchestrator-worker/tester/reviewer) or add a custom .md"
+        )
+    return path
+
+
+def resolve_agent(root: Path, config: Config, explicit: str | None, task: Task) -> str:
+    """Precedence: dispatch-time override > task's assigned role > default worker."""
+    name = explicit or task.role or config.worker_agent
+    _validate_agent(root, name)
+    return name
 
 
 def list_tasks(root: Path, status: str | None = None) -> list[dict]:
@@ -58,7 +79,11 @@ def get_task(root: Path, task_id: str) -> dict:
 
 
 def dispatch_task(
-    root: Path, task_id: str, model: str | None = None, instructions: str | None = None
+    root: Path,
+    task_id: str,
+    model: str | None = None,
+    instructions: str | None = None,
+    role: str | None = None,
 ) -> dict:
     root = Path(root)
     config = load_config(root)
@@ -75,9 +100,12 @@ def dispatch_task(
     if unmet:
         raise DispatchBlocked(f"{task_id} blocked by unmet dependencies: {', '.join(unmet)}")
 
+    agent_name = resolve_agent(root, config, role, task)
     worktree, branch = ensure_worktree(root, config, task.id, task.title, task.branch)
     task.branch = branch
-    prompt = render_delegation(config, task, extra_instructions=instructions)
+    prompt = render_delegation(
+        config, task, extra_instructions=instructions, worker_agent=agent_name
+    )
 
     dispatcher = get_dispatcher(root)
     record = dispatcher.spawn(
@@ -87,8 +115,9 @@ def dispatch_task(
         worktree=worktree,
         prompt=prompt,
         model=model or config.worker_model,
+        agent_name=agent_name,
     )
-    task.agent = config.worker_agent
+    task.agent = agent_name
     ledger.update_status(task.id, TaskStatus.DISPATCHED)
     ledger.save()
     return {
