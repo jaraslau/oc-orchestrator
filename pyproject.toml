@@ -5,7 +5,7 @@ description = "OpenCode-backed multi-agent repository orchestrator"
 authors = [{ name = "jaraslau" }]
 requires-python = ">=3.12"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["license"]
 requires-poetry = ">=2.0"
 dependencies = ["mcp>=1.2,<2"]
 
