@@ -5,7 +5,7 @@ description = "OpenCode-backed multi-agent repository orchestrator"
 authors = [{ name = "jaraslau" }]
 requires-python = ">=3.12"
 license = { text = "MIT" }
-dependencies = []
+dependencies = ["mcp (>=2.0.0,<3.0.0)"]
 
 [tool.poetry]
 packages = [{ include = "orchestrator", from = "src" }]
