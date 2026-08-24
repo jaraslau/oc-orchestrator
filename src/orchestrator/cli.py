@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
+from importlib import resources
 from pathlib import Path
 
 from orchestrator import __version__
@@ -20,50 +22,20 @@ MANAGER_AGENT_FILENAME = "orchestrator-manager.md"
 WORKER_AGENT_FILENAME = "orchestrator-worker.md"
 MCP_SERVER_NAME = "oc-orchestrator"
 GITIGNORE_ENTRY = ".orchestrator/"
+AGENTS_PACKAGE = "orchestrator.agents"
+ROOT_ENV_VAR = "OC_ORCHESTRATOR_ROOT"
 
-MCP_SERVER_ENTRY = {
-    "type": "local",
-    "command": ["oc-orchestrator", "serve"],
-    "enabled": True,
-}
 
-MANAGER_PROMPT = """\
----
-description: Repository Manager Agent coordinating oc-orchestrator workers
-mode: primary
----
+def _mcp_server_entry(root: Path) -> dict:
+    return {
+        "type": "local",
+        "command": ["oc-orchestrator", "serve", "--root", str(root)],
+        "enabled": True,
+    }
 
-You are the Repository Manager Agent for this repository, backed by the
-oc-orchestrator MCP tools (create_task, dispatch_task, task_status, list_tasks).
 
-Operating rules:
-
-1. Decompose goals into bounded, independently testable tasks.
-2. One isolated branch per task, named `{prefix}task-<id>-<slug>`.
-3. Track every task in the ledger; never lose state.
-4. Keep independent tasks running concurrently.
-5. Verify claimed success before merging; treat reports as evidence, not proof.
-
-The full operating playbook is installed in a later milestone.
-"""
-
-WORKER_PROMPT = """\
----
-description: Autonomous worker agent dispatched by oc-orchestrator
-mode: primary
----
-
-You are a Worker Agent dispatched by oc-orchestrator.
-
-Rules:
-
-1. Work only on your assigned task, on your assigned branch.
-2. Inspect existing code before modifying it; follow repository conventions.
-3. No unrelated refactors; no commits to the primary branch.
-4. Run relevant tests before reporting completion.
-5. Return a structured handoff: TASK, STATUS, BRANCH, COMMIT, SUMMARY,
-   FILES CHANGED, TESTS RUN, TEST RESULTS, KNOWN ISSUES, NOTES FOR MANAGER.
-"""
+def _load_agent_definition(filename: str) -> str:
+    return resources.files(AGENTS_PACKAGE).joinpath(filename).read_text(encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,7 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_init = sub.add_parser("init", help="initialize a repository for orchestration")
     p_init.add_argument("path", nargs="?", default=".", type=Path)
 
-    sub.add_parser("serve", help="run the MCP server (stdio)")
+    p_serve = sub.add_parser("serve", help="run the MCP server (stdio)")
+    p_serve.add_argument("--root", type=Path, default=None)
 
     p_status = sub.add_parser("status", help="show the task ledger")
     p_status.add_argument("path", nargs="?", default=".", type=Path)
@@ -105,8 +78,12 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     agents_dir = root / OPENCODE_DIRNAME / AGENT_SUBDIR
     agents_dir.mkdir(parents=True, exist_ok=True)
-    (agents_dir / MANAGER_AGENT_FILENAME).write_text(MANAGER_PROMPT, encoding="utf-8")
-    (agents_dir / WORKER_AGENT_FILENAME).write_text(WORKER_PROMPT, encoding="utf-8")
+    (agents_dir / MANAGER_AGENT_FILENAME).write_text(
+        _load_agent_definition(MANAGER_AGENT_FILENAME), encoding="utf-8"
+    )
+    (agents_dir / WORKER_AGENT_FILENAME).write_text(
+        _load_agent_definition(WORKER_AGENT_FILENAME), encoding="utf-8"
+    )
 
     ok = _merge_opencode_config(root)
     ignored = _ensure_gitignore_entry(root)
@@ -126,8 +103,17 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    del args  # unused; kept for uniform handler signature
-    return run_serve()
+    root = _resolve_root(args.root)
+    return run_serve(root=root)
+
+
+def _resolve_root(explicit: Path | None) -> Path:
+    if explicit is not None:
+        return explicit.resolve()
+    env = os.environ.get(ROOT_ENV_VAR)
+    if env:
+        return Path(env).resolve()
+    return Path.cwd().resolve()
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -167,7 +153,7 @@ def _merge_opencode_config(root: Path) -> bool:
         data = {"$schema": "https://opencode.ai/config.json"}
 
     servers = data.setdefault("mcp", {})
-    servers[MCP_SERVER_NAME] = MCP_SERVER_ENTRY
+    servers[MCP_SERVER_NAME] = _mcp_server_entry(root)
     write_json_atomic(cfg_path, data)
     return True
 

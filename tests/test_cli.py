@@ -27,8 +27,14 @@ class TestInit:
         opencode_cfg = json.loads((repo / ".opencode" / "opencode.json").read_text())
         assert opencode_cfg["$schema"].startswith("https://")
         entry = opencode_cfg["mcp"]["oc-orchestrator"]
-        assert entry["command"] == ["oc-orchestrator", "serve"]
+        # regression: root must be baked in; opencode may spawn servers from any cwd
+        assert entry["command"] == ["oc-orchestrator", "serve", "--root", str(repo)]
         assert entry["enabled"] is True
+        manager_md = (repo / ".opencode" / "agent" / MANAGER_AGENT_FILENAME).read_text()
+        worker_md = (repo / ".opencode" / "agent" / WORKER_AGENT_FILENAME).read_text()
+        assert "Repository Manager Agent" in manager_md
+        assert "dispatch_task" in manager_md
+        assert "```handoff" in worker_md
         assert "initialized orchestration state" in out
 
     def test_idempotent_rerun(self, repo):
@@ -106,3 +112,24 @@ class TestVersion:
             run(["--version"])
         assert exc.value.code == 0
         assert __version__ in capsys.readouterr().out
+
+
+class TestRootResolution:
+    def test_explicit_flag_wins(self, tmp_path, monkeypatch):
+        from orchestrator.cli import _resolve_root
+
+        monkeypatch.setenv("OC_ORCHESTRATOR_ROOT", "/elsewhere")
+        assert _resolve_root(tmp_path) == tmp_path.resolve()
+
+    def test_env_var_fallback(self, tmp_path, monkeypatch):
+        from orchestrator.cli import _resolve_root
+
+        monkeypatch.setenv("OC_ORCHESTRATOR_ROOT", str(tmp_path))
+        assert _resolve_root(None) == tmp_path.resolve()
+
+    def test_defaults_to_cwd(self, tmp_path, monkeypatch):
+        from orchestrator.cli import _resolve_root
+
+        monkeypatch.delenv("OC_ORCHESTRATOR_ROOT", raising=False)
+        monkeypatch.chdir(tmp_path)
+        assert _resolve_root(None) == tmp_path.resolve()

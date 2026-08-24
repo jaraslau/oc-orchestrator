@@ -26,7 +26,7 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
         risks: list[str] | None = None,
     ) -> dict:
         """Create a task in the ledger with an assigned branch name."""
-        return create_task(
+        return _service.create_task(
             base,
             title=title,
             objective=objective,
@@ -63,7 +63,10 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
     return mcp
 
 
-def run_serve(load_server: Callable[[str], object] | None = None) -> int:
+def run_serve(
+    load_server: Callable[[str], object] | None = None,
+    root: Path | None = None,
+) -> int:
     """Start the stdio MCP server. Returns 0 on clean shutdown, 1 on setup failure."""
     if load_server is None:
         try:
@@ -78,7 +81,7 @@ def run_serve(load_server: Callable[[str], object] | None = None) -> int:
             return 1
 
     try:
-        mcp = build_server(load_server)
+        mcp = build_server(load_server, root=root)
     except ImportError:
         print(
             "error: the 'mcp' package is not installed; run 'poetry install'",
