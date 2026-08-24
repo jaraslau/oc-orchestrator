@@ -8,8 +8,8 @@ license = { text = "MIT" }
 dependencies = ["mcp>=1.2,<2"]
 
 [tool.poetry]
-packages = [{ include = "orchestrator", from = "src" }]
-include = [{ path = "src/orchestrator/agents/**/*.md", format = ["sdist", "wheel"] }]
+packages = [{ include = "orchestrator" }]
+include = [{ path = "orchestrator/agents/**/*.md", format = ["sdist", "wheel"] }]
 
 [tool.poetry.scripts]
 oc-orchestrator = "orchestrator.cli:main"
@@ -25,7 +25,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["."]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
