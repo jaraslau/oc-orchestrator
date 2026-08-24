@@ -34,6 +34,7 @@ def create_task(
     dependencies: list[str] | None = None,
     risks: list[str] | None = None,
     role: str | None = None,
+    model: str | None = None,
 ) -> dict:
     config = load_config(root)
     ledger = Ledger.load(ledger_path(root))
@@ -43,6 +44,7 @@ def create_task(
         acceptance_criteria=acceptance_criteria,
         dependencies=dependencies,
         risks=risks,
+        model=model,
     )
     if role:
         _validate_agent(root, role)
@@ -114,7 +116,7 @@ def dispatch_task(
         branch=branch,
         worktree=worktree,
         prompt=prompt,
-        model=model or config.worker_model,
+        model=model or task.model or config.worker_model,
         agent_name=agent_name,
     )
     task.agent = agent_name
@@ -182,6 +184,8 @@ def _find(ledger: Ledger, task_id: str) -> Task | None:
 
 def _reconcile(ledger: Ledger, task: Task, record: DispatchRecord) -> None:
     """Fold worker process state into the ledger."""
+    if task.status not in {TaskStatus.PLANNED, TaskStatus.DISPATCHED, TaskStatus.WORKING}:
+        return
     running = record.exit_code is None and record.ended_at is None
     if running:
         if task.status == TaskStatus.DISPATCHED:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,9 @@ class Config:
     manager_agent: str = "orchestrator-manager"
     worker_agent: str = "orchestrator-worker"
     worker_model: str | None = None
+    planner_model: str | None = None
+    reviewer_model: str | None = None
+    gate_commands: list[str] = field(default_factory=list)
     opencode_bin: str = "opencode"
     gh_bin: str = "gh"
     merge_method: str = "squash"

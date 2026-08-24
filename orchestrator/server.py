@@ -25,9 +25,11 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
         dependencies: list[str] | None = None,
         risks: list[str] | None = None,
         role: str | None = None,
+        model: str | None = None,
     ) -> dict:
         """Create a task in the ledger with an assigned branch name. role assigns
-        the worker persona used at dispatch time (e.g. orchestrator-tester)."""
+        the worker persona used at dispatch time (e.g. orchestrator-tester).
+        model pins the LLM for this task's workers (overrides config default)."""
         return _service.create_task(
             base,
             title=title,
@@ -36,6 +38,7 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
             dependencies=dependencies,
             risks=risks,
             role=role,
+            model=model,
         )
 
     @mcp.tool()

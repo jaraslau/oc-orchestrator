@@ -11,7 +11,7 @@ and dependency-aware integration.
 
 ## Status
 
-Iterations 1–5 complete:
+Iterations 1–6 complete:
 
 - foundations: task ledger and CLI
 - worker dispatch: isolated per-task git worktrees, background workers
@@ -19,10 +19,12 @@ Iterations 1–5 complete:
 - review & integration: `gh` PR layer, changes-requested loop, reports
 - role assignment: built-in roles `orchestrator-tester` and
   `orchestrator-reviewer`; custom roles via `.opencode/agent/`
+- dark factory: `oc-orchestrator run "<goal>"` plans tasks with an LLM,
+  dispatches workers, runs gates, requests corrections, and merges — no human
 
-The package lives at `orchestrator/` at the repo root. CI runs tests and
-lint via a GitHub Actions workflow. Requires a one-time `gh auth login`
-for live GitHub operations.
+Per-task `model` overrides; `planner_model` / `reviewer_model` / `gate_commands`
+in `.orchestrator/config.json`. The package lives at `orchestrator/`; CI runs
+tests + ruff. Requires a one-time `gh auth login` for PR-based flows.
 
 ## Install
 
