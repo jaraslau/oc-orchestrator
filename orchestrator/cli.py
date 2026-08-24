@@ -60,6 +60,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_report = sub.add_parser("report", help="project completion report from the ledger")
     p_report.add_argument("path", nargs="?", default=".", type=Path)
 
+    p_run = sub.add_parser("run", help="dark factory: plan, dispatch, review, integrate a goal")
+    p_run.add_argument("goal")
+    p_run.add_argument("--path", type=Path, default=Path("."), help="target repository")
+    p_run.add_argument("--dry-run", action="store_true", help="plan only, create nothing")
+    p_run.add_argument("--max-loops", type=int, default=40)
+    p_run.add_argument("--max-corrections", type=int, default=2)
+    p_run.add_argument("--push", action="store_true", help="push primary branch after merges")
+
     return parser
 
 
@@ -70,6 +78,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "serve": cmd_serve,
         "status": cmd_status,
         "report": cmd_report,
+        "run": cmd_run,
     }
     return handlers[args.command](args)
 
@@ -154,6 +163,25 @@ def cmd_report(args: argparse.Namespace) -> int:
         print(f"no ledger found at {path}; run 'oc-orchestrator init' first", file=sys.stderr)
         return 1
     print(generate_report(root))
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    from orchestrator.supervisor import run_goal
+
+    root = args.path.resolve()
+    if not (root / ".orchestrator").exists():
+        print(f"not initialized: {root}; run 'oc-orchestrator init' first", file=sys.stderr)
+        return 1
+    return run_goal(
+        root,
+        args.goal,
+        dry_run=args.dry_run,
+        max_loops=args.max_loops,
+        max_corrections=args.max_corrections,
+        push=args.push,
+        io=print,
+    )
     return 0
 
 

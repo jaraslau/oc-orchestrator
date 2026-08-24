@@ -45,6 +45,7 @@ class Task:
     last_result: str | None = None
     handoff: dict[str, str] | None = None
     role: str | None = None
+    model: str | None = None
     risks: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
@@ -98,6 +99,7 @@ class Ledger:
         dependencies: list[str] | None = None,
         agent: str | None = None,
         branch: str | None = None,
+        model: str | None = None,
         risks: list[str] | None = None,
     ) -> Task:
         deps = dependencies or []
@@ -112,6 +114,7 @@ class Ledger:
             dependencies=list(deps),
             agent=agent,
             branch=branch,
+            model=model,
             risks=risks or [],
         )
         self.tasks[task.id] = task
