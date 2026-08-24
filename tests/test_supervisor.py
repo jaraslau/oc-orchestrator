@@ -30,10 +30,26 @@ class TestExtractJson:
 
 class TestParsePlan:
     def test_valid_plan(self):
-        plans = parse_plan(json.dumps({"tasks": [
-            {"title": "A", "objective": "do a", "acceptance_criteria": ["x"], "depends_on": []},
-            {"title": "B", "depends_on": ["A"], "role": "orchestrator-tester", "model": "g"},
-        ]}))
+        plans = parse_plan(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "title": "A",
+                            "objective": "do a",
+                            "acceptance_criteria": ["x"],
+                            "depends_on": [],
+                        },
+                        {
+                            "title": "B",
+                            "depends_on": ["A"],
+                            "role": "orchestrator-tester",
+                            "model": "g",
+                        },
+                    ]
+                }
+            )
+        )
         assert [p.title for p in plans] == ["A", "B"]
         assert plans[1].role == "orchestrator-tester"
         assert plans[1].model == "g"
