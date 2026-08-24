@@ -5,9 +5,7 @@
       "type": "local",
       "command": [
         "oc-orchestrator",
-        "serve",
-        "--root",
-        "/Users/acabski/Documents/important/oc-orchestrator"
+        "serve"
       ],
       "enabled": true
     }

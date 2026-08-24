@@ -1,6 +1,7 @@
 # oc-orchestrator
 
 OpenCode-backed orchestrator for my projects.
+Most of the code was written via said orchestrator with Big Pickle as a primary model.
 
 oc-orchestrator coordinates multiple autonomous coding agents working
 concurrently in isolated git branches/worktrees. An LLM "manager" agent

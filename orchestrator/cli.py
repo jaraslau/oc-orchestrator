@@ -28,9 +28,10 @@ ROOT_ENV_VAR = "OC_ORCHESTRATOR_ROOT"
 
 
 def _mcp_server_entry(root: Path) -> dict:
+    del root  # entry must stay machine-independent; serve falls back to cwd
     return {
         "type": "local",
-        "command": ["oc-orchestrator", "serve", "--root", str(root)],
+        "command": ["oc-orchestrator", "serve"],
         "enabled": True,
     }
 
@@ -79,7 +80,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"warning: {root} does not look like a git repository", file=sys.stderr)
 
     save_config(root, load_config(root))  # create-or-preserve, filling defaults
-    Ledger(ledger_path(root)).save()
+    lp = ledger_path(root)
+    if not lp.exists():
+        Ledger(lp).save()  # create-or-preserve: never clobber existing task history
 
     agents_dir = root / OPENCODE_DIRNAME / AGENT_SUBDIR
     agents_dir.mkdir(parents=True, exist_ok=True)
