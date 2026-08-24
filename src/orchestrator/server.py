@@ -36,9 +36,12 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
         )
 
     @mcp.tool()
-    def dispatch_task(task_id: str, model: str | None = None) -> dict:
-        """Dispatch a worker agent for a task in an isolated worktree (non-blocking)."""
-        return _service.dispatch_task(base, task_id, model=model)
+    def dispatch_task(
+        task_id: str, model: str | None = None, instructions: str | None = None
+    ) -> dict:
+        """Dispatch a worker agent for a task (non-blocking). Use instructions to
+        pass correction details when re-dispatching after changes were requested."""
+        return _service.dispatch_task(base, task_id, model=model, instructions=instructions)
 
     @mcp.tool()
     def task_status(task_id: str, timeout_seconds: float = 0.0) -> dict:
@@ -59,6 +62,36 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
     def cancel_task(task_id: str) -> dict:
         """Cancel a task and terminate its worker process if running."""
         return _service.cancel_task(base, task_id)
+
+    @mcp.tool()
+    def open_pr(task_id: str, title: str | None = None, body: str | None = None) -> dict:
+        """Open (or reuse) a GitHub pull request for a REVIEWING task."""
+        return _service.open_pr(base, task_id, title=title, body=body)
+
+    @mcp.tool()
+    def request_changes(task_id: str, comment: str) -> dict:
+        """Request corrections on a task's PR; re-dispatch with instructions afterwards."""
+        return _service.request_changes(base, task_id, comment)
+
+    @mcp.tool()
+    def merge_task(task_id: str) -> dict:
+        """Merge a task's PR (dependency-aware) and clean up its worktree."""
+        return _service.merge_task(base, task_id)
+
+    @mcp.tool()
+    def pr_diff(task_id: str) -> str:
+        """Return the diff of a task's pull request."""
+        return _service.pr_diff(base, task_id)
+
+    @mcp.tool()
+    def list_open_prs() -> list[dict]:
+        """List open pull requests in this repository."""
+        return _service.list_open_prs(base)
+
+    @mcp.tool()
+    def project_report() -> str:
+        """Generate a project-level completion report from the ledger."""
+        return _service.generate_report(base)
 
     return mcp
 

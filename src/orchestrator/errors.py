@@ -21,3 +21,7 @@ class DispatchBlocked(OrchestratorError):
 
 class WorktreeError(OrchestratorError):
     """Git worktree/branch plumbing failure."""
+
+
+class GhError(OrchestratorError):
+    """GitHub CLI (gh) invocation failure."""

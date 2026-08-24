@@ -23,6 +23,8 @@ class Config:
     worker_agent: str = "orchestrator-worker"
     worker_model: str | None = None
     opencode_bin: str = "opencode"
+    gh_bin: str = "gh"
+    merge_method: str = "squash"
 
 
 def state_dir(root: Path) -> Path:

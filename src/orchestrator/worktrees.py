@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -87,5 +88,8 @@ def remove_worktree(root: Path, config: Config, branch: str) -> bool:
     path = worktree_path(root, config, branch)
     if not path.exists():
         return False
-    _run_git(root, "worktree", "remove", "--force", str(path))
+    proc = _run_git(root, "worktree", "remove", "--force", str(path), check=False)
+    if proc.returncode != 0:
+        # Stale or corrupted registration: fall back to plain directory removal.
+        shutil.rmtree(path)
     return True
