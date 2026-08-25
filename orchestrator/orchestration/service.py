@@ -8,13 +8,18 @@ from orchestrator.core.config import Config, ledger_path, load_config
 from orchestrator.core.errors import DispatchBlocked, InvalidState, TaskNotFound
 from orchestrator.core.ledger import Ledger, Task, TaskStatus
 from orchestrator.orchestration.prompts import render_delegation
+from orchestrator.runtime.client import OpencodeClient
 from orchestrator.runtime.dispatcher import (
     Dispatcher,
     DispatchRecord,
     parse_handoff,
     wait_for_completion,
 )
+from orchestrator.runtime.events import EventTap
 from orchestrator.runtime.github import GhClient, pr_number_from_url
+from orchestrator.runtime.llm import run_llm
+from orchestrator.runtime.opencode_server import OpencodeServer
+from orchestrator.runtime.runner import SessionRunner
 from orchestrator.runtime.worktrees import branch_name, ensure_worktree, remove_worktree
 
 _TERMINAL_STATUSES = {TaskStatus.MERGED, TaskStatus.CANCELLED}
@@ -22,12 +27,78 @@ _TERMINAL_STATUSES = {TaskStatus.MERGED, TaskStatus.CANCELLED}
 _dispatchers: dict[str, Dispatcher] = {}
 
 
-def get_dispatcher(root: Path) -> Dispatcher:
-    """One Dispatcher per repo per process, so Popen handles survive across calls."""
+class ServerRuntime:
+    def __init__(self, root: Path, config: Config) -> None:
+        self.server = OpencodeServer(config.opencode_bin, config.server_port, Path(root))
+        self.base_url = self.server.start()
+        self.client = OpencodeClient(self.base_url)
+        self.tap = EventTap(self.client)
+        self.tap.start()
+        self.runner = SessionRunner(self.client, self.tap, fallback_models=config.fallback_models)
+
+    def close(self) -> None:
+        self.tap.stop()
+        self.server.stop()
+
+
+_runtimes: dict[str, ServerRuntime] = {}
+
+
+def get_runtime(root: Path) -> ServerRuntime | None:
+    """Shared opencode-server runtime per repo; None when backend is 'cli'."""
     key = str(Path(root).resolve())
-    if key not in _dispatchers:
-        _dispatchers[key] = Dispatcher(Path(key))
+    if key in _runtimes:
+        return _runtimes[key]
+    config = load_config(Path(key))
+    if config.execution_backend == "cli":
+        return None
+    runtime = ServerRuntime(Path(key), config)
+    _runtimes[key] = runtime
+    return runtime
+
+
+def shutdown_runtime(root: Path) -> None:
+    runtime = _runtimes.pop(str(Path(root).resolve()), None)
+    if runtime is not None:
+        runtime.close()
+
+
+def get_dispatcher(root: Path) -> Dispatcher:
+    """One Dispatcher per repo per process; server-backed when available."""
+    key = str(Path(root).resolve())
+    if key in _dispatchers:
+        return _dispatchers[key]
+    runtime = get_runtime(root)
+    runner = runtime.runner if runtime is not None else None
+    _dispatchers[key] = Dispatcher(Path(key), runner=runner)
     return _dispatchers[key]
+
+
+def call_llm(
+    root: Path,
+    prompt: str,
+    *,
+    model: str | None = None,
+    agent: str | None = None,
+    effort: str | None = None,
+    timeout: float = 900.0,
+) -> str:
+    """Planner/reviewer calls: server session with failover when possible."""
+    runtime = get_runtime(root)
+    if runtime is None:
+        config = load_config(Path(root))
+        return run_llm(
+            Path(root), config, prompt, model=model, agent=agent, timeout=timeout, effort=effort
+        )
+    result = runtime.runner.run(
+        prompt,
+        Path(root),
+        agent=agent,
+        model=model,
+        variant=effort,
+        timeout=timeout,
+    )
+    return result.text
 
 
 def create_task(
@@ -136,6 +207,8 @@ def dispatch_task(
         "worktree": str(worktree),
         "log": record.log_path,
         "pid": record.pid,
+        "worker_engine": record.engine,
+        "model": model or task.model or config.worker_model,
     }
 
 
@@ -239,6 +312,9 @@ def _record_dict(record: DispatchRecord | None) -> dict | None:
             "exit_code": record.exit_code,
             "log": record.log_path,
             "worktree": record.worktree,
+            "engine": record.engine,
+            "session_id": record.session_id,
+            "model_used": record.model_used or None,
         }
     )
 
