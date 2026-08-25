@@ -190,7 +190,9 @@ class SessionRunner:
     def _assistant_text(messages: list[dict]) -> str:
         chunks: list[str] = []
         for message in messages:
-            if message.get("role") != "assistant":
+            info = message.get("info") or {}
+            role = info.get("role") or message.get("role")
+            if role != "assistant":
                 continue
             for part in message.get("parts", []):
                 if part.get("type") == "text":
