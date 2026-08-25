@@ -47,8 +47,8 @@ class FakeClient:
     def messages(self, session_id, directory):
         return self.messages_map.get(session_id, [])
 
-    def wait(self, session_id, directory, timeout=900.0):
-        return
+    def session_alive(self, session_id):
+        return session_id in self.status_map
 
     def abort(self, session_id, directory):
         self.aborted.append(session_id)
@@ -57,7 +57,7 @@ class FakeClient:
         assistant = {"role": "assistant", "parts": [{"type": "text", "text": text}]}
         existing = self.messages_map.setdefault(session_id, [])
         existing.append(assistant)
-        self.status_map[session_id] = "idle"
+        self.status_map.pop(session_id, None)
 
 
 class StubTap:
@@ -178,12 +178,8 @@ class TestRun:
     def test_timeout_aborts_session(self, monkeypatch):
         client = FakeClient()
         runner = make_runner(client)
-        from orchestrator.runtime.client import OpencodeApiError
 
-        def timeout_wait(session_id, directory, timeout=900.0):
-            raise OpencodeApiError(0, "timed out")
-
-        monkeypatch.setattr(client, "wait", timeout_wait)
+        monkeypatch.setattr(client, "session_alive", lambda sid: True)
         with pytest.raises(TimeoutError):
             runner.run("goal", Path("/wt"), timeout=0.01)
         assert client.aborted == ["ses_0"]

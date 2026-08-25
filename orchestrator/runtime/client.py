@@ -108,12 +108,10 @@ class OpencodeClient:
             return data
         return list((data or {}).get("rows", []))
 
-    def wait(self, session_id: str, directory: str, timeout: float = 900.0) -> None:
-        self._request(
-            "POST",
-            f"/session/{session_id}/wait?directory={_q(directory)}",
-            timeout=timeout,
-        )
+    def session_alive(self, session_id: str) -> bool:
+        """Check if a session is still in the server's status map."""
+        status = self.status()
+        return session_id in status
 
     def abort(self, session_id: str, directory: str) -> None:
         try:

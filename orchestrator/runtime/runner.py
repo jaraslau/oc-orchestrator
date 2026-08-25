@@ -150,35 +150,35 @@ class SessionRunner:
             f" variant={variant}" if variant else "",
         )
         started = time.monotonic()
+        baseline = self._message_count(session_id, directory)
         try:
             self.client.prompt_async(session_id, prompt, model, agent, variant, directory)
         except OpencodeApiError:
             self.abort_session(handle)
             raise
-        try:
-            self.client.wait(session_id, directory, timeout=timeout)
-        except OpencodeApiError as exc:
+        deadline = started + timeout
+        while True:
             error = self.tap.pop_error(session_id)
             if error is not None:
                 self.abort_session(handle)
-                raise RuntimeError(
-                    f"{error.get('name', 'UnknownError')}: {error.get('message', '')}"
-                ) from None
-            if exc.status == 0:
+                msg = f"{error.get('name', 'UnknownError')}: {error.get('message', '')}"
+                raise RuntimeError(msg) from None
+            if not self.client.session_alive(session_id):
+                messages = self.client.messages(session_id, directory)
+                if len(messages) > baseline:
+                    text = self._assistant_text(messages)
+                    elapsed = time.monotonic() - started
+                    log.info(
+                        "session %s completed in %.1fs (%d chars)",
+                        session_id,
+                        elapsed,
+                        len(text),
+                    )
+                    return RunResult(text=text, session_id=session_id)
+            if time.monotonic() >= deadline:
                 self.abort_session(handle)
                 raise TimeoutError(f"session {session_id} exceeded {timeout}s") from None
-            self.abort_session(handle)
-            raise
-        error = self.tap.pop_error(session_id)
-        if error is not None:
-            self.abort_session(handle)
-            msg = f"{error.get('name', 'UnknownError')}: {error.get('message', '')}"
-            raise RuntimeError(msg) from None
-        messages = self.client.messages(session_id, directory)
-        text = self._assistant_text(messages)
-        elapsed = time.monotonic() - started
-        log.info("session %s completed in %.1fs (%d chars)", session_id, elapsed, len(text))
-        return RunResult(text=text, session_id=session_id)
+            time.sleep(self.poll_interval)
 
     def _message_count(self, session_id: str, directory: str) -> int:
         try:
