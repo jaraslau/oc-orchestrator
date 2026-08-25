@@ -12,18 +12,23 @@ from pathlib import Path
 from orchestrator.core.config import Config, ledger_path, load_config
 from orchestrator.core.errors import DispatchBlocked
 from orchestrator.core.ledger import Ledger, TaskStatus
+from orchestrator.logs import get
 from orchestrator.orchestration.service import (
+    call_llm,
     cleanup_worktree,
     create_task,
     dispatch_task,
     generate_report,
+    shutdown_runtime,
     task_status,
 )
-from orchestrator.runtime.llm import LlmRunner, run_llm
+from orchestrator.runtime.llm import LlmRunner
 
 Io = Callable[[str], None]
 GateRunner = Callable[[Path, Config], tuple[bool, str]]
 Reviewer = Callable[[dict, str, bool], tuple[str, str]]
+
+log = get("supervisor")
 
 TERMINAL_OK = {"MERGED"}
 TERMINAL_GIVE_UP = {"BLOCKED", "FAILED", "CANCELLED"}
@@ -120,17 +125,24 @@ def parse_plan(text: str) -> list[PlannedTask]:
     return plans
 
 
+def _service_llm(root: Path, config: Config, prompt: str, model: str | None = None) -> str:
+    return call_llm(root, prompt, model=model)
+
+
 def plan_tasks(
-    root: Path, config: Config, goal: str, runner: LlmRunner = run_llm
+    root: Path, config: Config, goal: str, runner: LlmRunner = _service_llm
 ) -> list[PlannedTask]:
     prompt = PLAN_PROMPT.format(goal=goal)
     try:
-        return parse_plan(runner(root, config, prompt, config.planner_model))
+        plans = parse_plan(runner(root, config, prompt, config.planner_model))
+        log.info("planner produced %d task(s)", len(plans))
+        return plans
     except (PlanningError, json.JSONDecodeError, RuntimeError):
         feedback = (
             "Your previous response was not valid plan JSON matching the schema. "
             "Respond again with ONLY the fenced JSON block."
         )
+        log.warning("planner response invalid; retrying once with corrective feedback")
         return parse_plan(runner(root, config, prompt + "\n\n" + feedback, config.planner_model))
 
 
@@ -203,11 +215,10 @@ def llm_review(task: dict, diff: str, gate_ok: bool, gate_output: str) -> tuple[
     )
     root = Path(task["_root"])
     config = load_config(root)
-    text = run_llm(
+    text = call_llm(
         root,
-        config,
         prompt,
-        config.reviewer_model,
+        model=config.reviewer_model,
         agent="orchestrator-reviewer",
         effort=task.get("effort"),
     )
@@ -261,86 +272,111 @@ def run_goal(
     root = Path(root)
     config = load_config(root)
     gate = gate_runner or default_gate
+    log.info("run_goal start: %r (backend=%s)", goal[:80], config.execution_backend)
 
-    io(f"planning: {goal[:100]}")
-    plans = planner(root, config, goal)
-    if dry_run:
-        for i, p in enumerate(plans, 1):
-            deps = f" <- {'/'.join(p.depends_on)}" if p.depends_on else ""
-            io(f"  {i}. {p.title}{deps} [{p.role or 'worker'}]")
-        io(f"dry-run: {len(plans)} tasks planned, nothing created")
-        return 0
+    try:
+        io(f"planning: {goal[:100]}")
+        plans = planner(root, config, goal)
+        if dry_run:
+            for i, p in enumerate(plans, 1):
+                deps = f" <- {'/'.join(p.depends_on)}" if p.depends_on else ""
+                io(f"  {i}. {p.title}{deps} [{p.role or 'worker'}]")
+            io(f"dry-run: {len(plans)} tasks planned, nothing created")
+            return 0
 
-    ids = create_planned_tasks(root, plans)
-    io(f"created: {', '.join(ids)}")
+        ids = create_planned_tasks(root, plans)
+        io(f"created: {', '.join(ids)}")
 
-    corrections: dict[str, int] = {tid: 0 for tid in ids}
-    retries: dict[str, int] = {tid: 0 for tid in ids}
-    merged = 0
+        corrections: dict[str, int] = {tid: 0 for tid in ids}
+        retries: dict[str, int] = {tid: 0 for tid in ids}
+        merged = 0
 
-    for loop in range(1, max_loops + 1):
-        progressed = False
+        for loop in range(1, max_loops + 1):
+            progressed = False
+            log.debug("loop %d/%d", loop, max_loops)
 
-        for tid in ids:
-            snap = task_status(root, tid)
-            if snap["task"]["status"] != TaskStatus.PLANNED.value:
-                continue
-            try:
-                dispatch_task(root, tid)
-                io(f"[{loop}] dispatched {tid} ({snap['task']['title']})")
-                progressed = True
-            except DispatchBlocked:
-                pass
-
-        for tid in ids:
-            snap = task_status(root, tid, timeout=poll_seconds)
-            t = snap["task"]
-            status = t["status"]
-
-            if status == "REVIEWING":
-                progressed = True
-                worktree = _worktree_path(root, config, t["branch"])
-                if not worktree.exists():
-                    io(f"[{loop}] warning: {tid} REVIEWING but worktree missing")
+            for tid in ids:
+                snap = task_status(root, tid)
+                if snap["task"]["status"] != TaskStatus.PLANNED.value:
                     continue
-                ok, gate_out = gate(worktree, config)
-                verdict, instructions = ("approve", "") if ok else ("changes", gate_out)
-                if reviewer is not None:
-                    diff = _worktree_diff(worktree, config.primary_branch)
-                    task_ctx = {**t, "_root": str(root)}
-                    verdict, instructions = reviewer(task_ctx, diff, ok, gate_out)
+                try:
+                    record = dispatch_task(root, tid)
+                    engine_note = (
+                        f", engine={record['worker_engine']}" if record.get("worker_engine") else ""
+                    )
+                    model_note = f", model={record['model']}" if record.get("model") else ""
+                    io(
+                        f"[{loop}] dispatched {tid}{engine_note}"
+                        f"{model_note} ({snap['task']['title']})"
+                    )
+                    progressed = True
+                except DispatchBlocked:
+                    pass
 
-                if verdict == "approve":
-                    _finalize_merge(root, config, tid, t, io)
-                    merged += 1
-                elif corrections[tid] < max_corrections:
-                    corrections[tid] += 1
-                    dispatch_task(root, tid, instructions=instructions or gate_out[-1500:])
-                    io(f"[{loop}] changes requested on {tid} (correction {corrections[tid]})")
-                else:
-                    _give_up(root, tid, "correction budget exhausted", io)
+            for tid in ids:
+                snap = task_status(root, tid, timeout=poll_seconds)
+                t = snap["task"]
+                status = t["status"]
+                worker = snap.get("worker") or {}
+                if worker.get("model_used") and worker.get("exit_code") is None:
+                    log.info(
+                        "%s running on %s (session %s)",
+                        tid,
+                        worker["model_used"],
+                        worker.get("session_id"),
+                    )
 
-            elif status in ("FAILED", "BLOCKED"):
-                progressed = True
-                note = t.get("last_result") or ""
-                if retries[tid] < 1:
-                    retries[tid] += 1
-                    dispatch_task(root, tid, instructions=f"Previous attempt failed: {note[-800:]}")
-                    io(f"[{loop}] retrying {tid} after failure ({retries[tid]}/1)")
-                else:
-                    _give_up(root, tid, note, io)
+                if status == "REVIEWING":
+                    progressed = True
+                    worktree = _worktree_path(root, config, t["branch"])
+                    if not worktree.exists():
+                        io(f"[{loop}] warning: {tid} REVIEWING but worktree missing")
+                        continue
+                    ok, gate_out = gate(worktree, config)
+                    verdict, instructions = ("approve", "") if ok else ("changes", gate_out)
+                    if reviewer is not None:
+                        diff = _worktree_diff(worktree, config.primary_branch)
+                        task_ctx = {**t, "_root": str(root)}
+                        verdict, instructions = reviewer(task_ctx, diff, ok, gate_out)
 
-        if all(_is_terminal(root, tid) for tid in ids):
-            break
-        if not progressed:
-            time.sleep(poll_seconds)
+                    if verdict == "approve":
+                        _finalize_merge(root, config, tid, t, io)
+                        merged += 1
+                    elif corrections[tid] < max_corrections:
+                        corrections[tid] += 1
+                        dispatch_task(root, tid, instructions=instructions or gate_out[-1500:])
+                        io(f"[{loop}] changes requested on {tid} (correction {corrections[tid]})")
+                    else:
+                        _give_up(root, tid, "correction budget exhausted", io)
 
-    report = generate_report(root)
-    io(report)
-    if push and merged:
-        subprocess.run(["git", "push", "origin", config.primary_branch], cwd=str(root), check=False)
-    total = len(ids)
-    return 0 if merged == total else 1
+                elif status in ("FAILED", "BLOCKED"):
+                    progressed = True
+                    note = t.get("last_result") or ""
+                    if retries[tid] < 1:
+                        retries[tid] += 1
+                        dispatch_task(
+                            root, tid, instructions=f"Previous attempt failed: {note[-800:]}"
+                        )
+                        io(f"[{loop}] retrying {tid} after failure ({retries[tid]}/1)")
+                    else:
+                        _give_up(root, tid, note, io)
+
+            if all(_is_terminal(root, tid) for tid in ids):
+                break
+            if not progressed:
+                time.sleep(poll_seconds)
+
+        report = generate_report(root)
+        io(report)
+        if push and merged:
+            subprocess.run(
+                ["git", "push", "origin", config.primary_branch], cwd=str(root), check=False
+            )
+        total = len(ids)
+        log.info("run_goal done: %d/%d merged", merged, total)
+        return 0 if merged == total else 1
+    finally:
+        shutdown_runtime(root)
 
 
 def _worktree_path(root: Path, config: Config, branch: str) -> Path:

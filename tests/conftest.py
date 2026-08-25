@@ -69,7 +69,7 @@ HANDOFF_FAIL = (
 
 
 def configured(repo, worker_bin: str) -> Config:
-    config = Config(opencode_bin=worker_bin)
+    config = Config(opencode_bin=worker_bin, execution_backend="cli")
     save_config(repo, config)
     return config
 

@@ -46,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="OpenCode-backed multi-agent repository orchestrator",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose console logging")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init", help="initialize a repository for orchestration")
@@ -73,6 +74,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    root_hint = getattr(args, "path", None) or getattr(args, "root", None)
+    from orchestrator.logs import setup_logging
+
+    log_file = setup_logging(
+        Path(root_hint).resolve() if root_hint else Path.cwd(), verbose=args.verbose
+    )
+    if not args.verbose:
+        print(f"logging to {log_file} (use --verbose for live detail)", file=sys.stderr)
     handlers = {
         "init": cmd_init,
         "serve": cmd_serve,
@@ -173,16 +182,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not (root / ".orchestrator").exists():
         print(f"not initialized: {root}; run 'oc-orchestrator init' first", file=sys.stderr)
         return 1
-    return run_goal(
-        root,
-        args.goal,
-        dry_run=args.dry_run,
-        max_loops=args.max_loops,
-        max_corrections=args.max_corrections,
-        push=args.push,
-        io=print,
-    )
-    return 0
+    try:
+        code = run_goal(
+            root,
+            args.goal,
+            dry_run=args.dry_run,
+            max_loops=args.max_loops,
+            max_corrections=args.max_corrections,
+            push=args.push,
+            io=print,
+        )
+    except KeyboardInterrupt:
+        print("interrupted; shutting down worker sessions", file=sys.stderr)
+        code = 130
+    return code
 
 
 def _merge_opencode_config(root: Path) -> bool:

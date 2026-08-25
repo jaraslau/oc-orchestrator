@@ -99,6 +99,7 @@ oc-orchestrator run GOAL [--path PATH]   # dark factory (see above)
 oc-orchestrator serve [--root PATH]      # MCP stdio server
 oc-orchestrator status [PATH]            # dump the ledger
 oc-orchestrator report [PATH]            # completion summary
+oc-orchestrator -v ...                   # verbose logging (any command)
 oc-orchestrator --version
 ```
 
@@ -127,6 +128,9 @@ the changes-requested loop.
 | `branch_prefix` | `"agent/"` | task branch namespace |
 | `worker_agent` | `orchestrator-worker` | default persona |
 | `worker_model` / `planner_model` / `reviewer_model` | `null` | model pins per role; unset = opencode default |
+| `fallback_models` | `[]` | ordered chain of backup models; on provider failure the next model is tried automatically |
+| `execution_backend` | `"server"` | `"server"` (shared opencode server, failover, live events) or `"cli"` (detached subprocesses) |
+| `worker_timeout` | `3600` | seconds before a running worker is aborted |
 | `gate_commands` | `[]` | shell commands run in the worktree before review, e.g. `["poetry run pytest -q", "ruff check ."]` |
 | `gh_bin` | `"gh"` | GitHub CLI binary |
 | `merge_method` | `"squash"` | used by gh PR merges |
@@ -136,6 +140,25 @@ Per-task overrides beat config: `create_task(role=..., model=..., effort=...)` /
 variant passed to opencode (`--variant`, e.g. `high`/`medium`/`low`);
 the planner picks it per task — high for architecture/debugging, low for
 mechanical chores.
+
+## Resilience & observability
+
+Errors are classified into provider-sided (auth, quota, rate limit,
+model-not-found, provider-unavailable) and hard failures (context overflow,
+bug in our code). Provider-sided errors trigger **automatic failover** through
+the `fallback_models` chain — the next available model is tried; everything
+else fails instantly with full diagnosis.
+
+All decisions, model switches, and errors are written to
+`.orchestrator/logs/orchestrator.log` (DEBUG level). Run with `-v` / `--verbose`
+for live stderr output including per-tool call status, failover switches, and
+session lifecycle events.
+
+The `worker_status` worker dict (from `task_status`) now includes `engine`,
+`session_id`, and `model_used` — the actual model that completed the work.
+
+`"server"` backend (default) uses a shared `opencode serve` instance;
+`"cli"` falls back to the proven detached-subprocess model.
 
 ## Roles & custom agents
 

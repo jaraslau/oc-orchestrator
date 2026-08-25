@@ -1,9 +1,10 @@
-"""Background worker process management.
+"""Background worker management with two engines.
 
-Workers run as detached `opencode run` subprocesses inside per-task
-worktrees. State survives orchestrator restarts via a registry file;
-exit codes are only recoverable in-process, so post-restart completion
-is inferred from liveness plus the handoff block in the log.
+- cli (legacy): detached `opencode run` subprocesses; state survives restarts.
+- server (default): sessions on a shared opencode server owned by this
+  process, with model failover and live event logging.
+
+Both engines honor the same registry/log/handoff contract.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ import os
 import re
 import signal
 import subprocess
+import threading
+import traceback
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +22,9 @@ from typing import Any
 
 from orchestrator.core.config import Config, state_dir
 from orchestrator.core.storage import read_json, write_json_atomic
+from orchestrator.logs import get
+
+log = get("dispatcher")
 
 DISPATCHES_FILENAME = "dispatches.json"
 HANDOFF_RE = re.compile(r"```handoff\s*\n(.*?)```", re.DOTALL)
@@ -39,6 +45,9 @@ class DispatchRecord:
     started_at: str
     exit_code: int | None = None
     ended_at: str | None = None
+    session_id: str | None = None
+    model_used: str | None = None
+    engine: str = "cli"
 
 
 def parse_handoff(text: str) -> dict[str, str] | None:
@@ -59,9 +68,15 @@ def parse_handoff(text: str) -> dict[str, str] | None:
 
 
 class Dispatcher:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, runner: Any | None = None) -> None:
         self.root = root
         self._popens: dict[str, subprocess.Popen[bytes]] = {}
+        self._runner = runner
+        self._handles: dict[str, Any] = {}
+
+    @property
+    def engine(self) -> str:
+        return "server" if self._runner is not None else "cli"
 
     @property
     def registry_path(self) -> Path:
@@ -109,6 +124,19 @@ class Dispatcher:
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = logs_dir / f"{task_id.lower()}.log"
 
+        if self._runner is not None:
+            return self._spawn_server(
+                config=config,
+                task_id=task_id,
+                branch=branch,
+                worktree=worktree,
+                prompt=prompt,
+                model=model,
+                agent_name=agent_name,
+                variant=variant,
+                log_path=log_path,
+            )
+
         cmd = self.build_command(config, worktree, prompt, model, agent_name, variant)
 
         with log_path.open("wb") as log:
@@ -135,6 +163,66 @@ class Dispatcher:
         self._save_registry(registry)
         return record
 
+    def _spawn_server(
+        self,
+        *,
+        config: Config,
+        task_id: str,
+        branch: str,
+        worktree: Path,
+        prompt: str,
+        model: str | None,
+        agent_name: str | None,
+        variant: str | None,
+        log_path: Path,
+    ) -> DispatchRecord:
+        record = DispatchRecord(
+            task_id=task_id,
+            pid=None,
+            branch=branch,
+            worktree=str(worktree),
+            log_path=str(log_path),
+            started_at=_now(),
+            engine="server",
+        )
+        registry = self._load_registry()
+        registry[task_id] = asdict(record)
+        self._save_registry(registry)
+
+        def work() -> None:
+            self._handles[task_id] = None
+            try:
+                result = self._runner.run(
+                    prompt,
+                    worktree,
+                    agent=agent_name or config.worker_agent,
+                    model=model,
+                    variant=variant,
+                    timeout=config.worker_timeout,
+                    on_session=lambda handle: self._handles.__setitem__(task_id, handle),
+                )
+                record.session_id = result.session_id
+                record.model_used = result.models_tried[-1] if result.models_tried else model
+                log_path.write_text(
+                    f"[model used: {result.models_tried[-1]}]\n\n{result.text}\n", encoding="utf-8"
+                )
+                self._finalize(record, 0, self._load_registry())
+                log.info("task %s completed (session %s)", task_id, result.session_id)
+            except Exception as exc:
+                diagnosis = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+                log.error("task %s failed: %s", task_id, diagnosis)
+                with log_path.open("a", encoding="utf-8") as fh:
+                    fh.write(f"\n[orchestrator] worker failed: {diagnosis}\n")
+                if record.model_used is None:
+                    record.model_used = model or ""
+                self._finalize(record, 1, self._load_registry())
+            finally:
+                self._handles.pop(task_id, None)
+
+        thread = threading.Thread(target=work, name=f"worker-{task_id}", daemon=True)
+        thread.start()
+        return record
+
     def poll(self, task_id: str) -> DispatchRecord | None:
         """Return the current record, updating exit status when discoverable."""
         registry = self._load_registry()
@@ -153,6 +241,8 @@ class Dispatcher:
             return record
 
         # Post-restart: no Popen handle; infer from liveness.
+        if record.engine == "server" or record.pid is None:
+            return record
         try:
             os.kill(record.pid or 0, 0)
         except ProcessLookupError:
@@ -173,7 +263,12 @@ class Dispatcher:
         self._save_registry(registry)
 
     def terminate(self, task_id: str) -> bool:
-        """Terminate a running worker (SIGTERM to its process group)."""
+        """Terminate a running worker (abort session or SIGTERM process group)."""
+        handle = self._handles.get(task_id)
+        if handle is not None:
+            self._runner.abort_session(handle)
+            log.info("aborted session %s for task %s", handle.session_id, task_id)
+            return True
         proc = self._popens.get(task_id)
         if proc is not None and proc.poll() is None:
             os.killpg(proc.pid, signal.SIGTERM)
