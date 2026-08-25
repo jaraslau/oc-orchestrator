@@ -47,6 +47,9 @@ class FakeClient:
     def messages(self, session_id, directory):
         return self.messages_map.get(session_id, [])
 
+    def wait(self, session_id, directory, timeout=900.0):
+        return
+
     def abort(self, session_id, directory):
         self.aborted.append(session_id)
 
@@ -174,13 +177,15 @@ class TestRun:
 
     def test_timeout_aborts_session(self, monkeypatch):
         client = FakeClient()
-        runner = make_runner(client, poll=0.001)
-        import time as time_mod
+        runner = make_runner(client)
+        from orchestrator.runtime.client import OpencodeApiError
 
-        real_sleep = time_mod.sleep
-        monkeypatch.setattr(time_mod, "sleep", lambda _: real_sleep(0.001))
+        def timeout_wait(session_id, directory, timeout=900.0):
+            raise OpencodeApiError(0, "timed out")
+
+        monkeypatch.setattr(client, "wait", timeout_wait)
         with pytest.raises(TimeoutError):
-            runner.run("goal", Path("/wt"), timeout=0.05)
+            runner.run("goal", Path("/wt"), timeout=0.01)
         assert client.aborted == ["ses_0"]
 
     def test_on_session_hook_receives_handle(self):

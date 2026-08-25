@@ -64,9 +64,10 @@ class OpencodeClient:
     def default_model(self) -> tuple[str, str]:
         data = self._request("GET", "/config/providers") or {}
         default = data.get("default", {}) or {}
-        for key in ("providerID", "provider_id"):
-            if key in default and default.get("modelID"):
-                return str(default[key]), str(default["modelID"])
+        if isinstance(default, dict):
+            for provider_id, model_id in default.items():
+                if isinstance(model_id, str):
+                    return str(provider_id), model_id
         raise OpencodeApiError(0, "server reported no default model")
 
     def create_session(self, directory: str, title: str) -> str:
@@ -101,6 +102,13 @@ class OpencodeClient:
         if isinstance(data, list):
             return data
         return list((data or {}).get("rows", []))
+
+    def wait(self, session_id: str, directory: str, timeout: float = 900.0) -> None:
+        self._request(
+            "POST",
+            f"/session/{session_id}/wait?directory={_q(directory)}",
+            timeout=timeout,
+        )
 
     def abort(self, session_id: str, directory: str) -> None:
         try:
