@@ -34,10 +34,12 @@ class OpencodeClient:
         self.base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+    def _request(
+        self, method: str, path: str, *, timeout: float | None = None, **kwargs: Any
+    ) -> Any:
         try:
             response = httpx.request(
-                method, f"{self.base_url}{path}", timeout=self._timeout, **kwargs
+                method, f"{self.base_url}{path}", timeout=timeout or self._timeout, **kwargs
             )
         except httpx.HTTPError as exc:
             raise OpencodeApiError(0, f"connection failure: {exc}") from exc
