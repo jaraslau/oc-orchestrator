@@ -26,10 +26,12 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
         risks: list[str] | None = None,
         role: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
     ) -> dict:
         """Create a task in the ledger with an assigned branch name. role assigns
         the worker persona used at dispatch time (e.g. orchestrator-tester).
-        model pins the LLM for this task's workers (overrides config default)."""
+        model pins the LLM for this task's workers; effort sets reasoning effort
+        (provider variant, e.g. high/medium/low)."""
         return _service.create_task(
             base,
             title=title,
@@ -39,6 +41,7 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
             risks=risks,
             role=role,
             model=model,
+            effort=effort,
         )
 
     @mcp.tool()
@@ -47,12 +50,14 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
         model: str | None = None,
         instructions: str | None = None,
         role: str | None = None,
+        effort: str | None = None,
     ) -> dict:
         """Dispatch a worker agent for a task (non-blocking). Use instructions to
         pass correction details when re-dispatching after changes were requested.
-        role overrides the worker persona for this dispatch (e.g. orchestrator-reviewer)."""
+        role overrides the worker persona for this dispatch (e.g. orchestrator-reviewer).
+        effort overrides reasoning effort (provider variant, e.g. high/medium/low)."""
         return _service.dispatch_task(
-            base, task_id, model=model, instructions=instructions, role=role
+            base, task_id, model=model, instructions=instructions, role=role, effort=effort
         )
 
     @mcp.tool()

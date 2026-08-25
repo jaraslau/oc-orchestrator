@@ -45,6 +45,7 @@ class TestParsePlan:
                             "depends_on": ["A"],
                             "role": "orchestrator-tester",
                             "model": "g",
+                            "effort": "high",
                         },
                     ]
                 }
@@ -53,6 +54,11 @@ class TestParsePlan:
         assert [p.title for p in plans] == ["A", "B"]
         assert plans[1].role == "orchestrator-tester"
         assert plans[1].model == "g"
+        assert plans[1].effort == "high"
+
+    def test_effort_omitted_is_none(self):
+        plans = parse_plan(json.dumps({"tasks": [{"title": "C"}]}))
+        assert plans[0].effort is None
 
     def test_empty_or_titleless_rejected(self):
         with pytest.raises(PlanningError):
@@ -171,10 +177,11 @@ class TestRunGoal:
 
         def spy(config, worktree, prompt, model=None, agent_name=None, variant=None):
             recorded["model"] = model
+            recorded["variant"] = variant
             return original.__func__(config, worktree, prompt, model, agent_name, variant)
 
         with patch.object(dispatcher_mod.Dispatcher, "build_command", staticmethod(spy)):
-            plans = [PlannedTask(title="Heavy lift", model="anthropic/opus")]
+            plans = [PlannedTask(title="Heavy lift", model="anthropic/opus", effort="high")]
             run_goal(
                 fast_factory,
                 "goal",
@@ -186,6 +193,23 @@ class TestRunGoal:
                 io=lambda s: None,
             )
         assert recorded["model"] == "anthropic/opus"
+        assert recorded["variant"] == "high"
+
+    def test_planned_effort_persists_on_task(self, fast_factory):
+        plans = [PlannedTask(title="Tricky bug", effort="high")]
+        run_goal(
+            fast_factory,
+            "fix it",
+            max_loops=15,
+            poll_seconds=0.05,
+            planner=lambda root, config, goal: plans,
+            gate_runner=lambda wt, cfg: (True, ""),
+            reviewer=_approve_all(),
+            io=lambda s: None,
+        )
+        lg = Ledger.load(ledger_path(fast_factory))
+        (t,) = lg.tasks.values()
+        assert t.effort == "high"
 
     def test_dependencies_created_in_order(self, fast_factory):
         plans = [
