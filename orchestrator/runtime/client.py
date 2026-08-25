@@ -47,7 +47,10 @@ class OpencodeClient:
             raise OpencodeApiError(response.status_code, response.text)
         if not response.content:
             return None
-        return response.json()
+        try:
+            return response.json()
+        except ValueError:
+            return None
 
     def health(self) -> bool:
         try:
