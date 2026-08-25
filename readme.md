@@ -107,7 +107,8 @@ oc-orchestrator --version
 ## MCP tools
 
 `create_task(title, objective?, acceptance_criteria?, dependencies?, risks?,
-role?, model?)` · `dispatch_task(task_id, model?, instructions?, role?)` ·
+role?, model?, effort?)` · `dispatch_task(task_id, model?, instructions?,
+role?, effort?)` ·
 `task_status(task_id, timeout_seconds?)` · `list_tasks` · `get_task(task_id)` ·
 `cancel_task(task_id)` · `open_pr(task_id)` · `pr_diff(task_id)` ·
 `request_changes(task_id, comment)` · `merge_task(task_id)` ·
@@ -130,8 +131,11 @@ the changes-requested loop.
 | `gh_bin` | `"gh"` | GitHub CLI binary |
 | `merge_method` | `"squash"` | used by gh PR merges |
 
-Per-task overrides beat config: `create_task(role=..., model=...)` /
-`dispatch_task(role=..., model=...)`.
+Per-task overrides beat config: `create_task(role=..., model=..., effort=...)` /
+`dispatch_task(role=..., model=..., effort=...)`. `effort` is the reasoning
+variant passed to opencode (`--variant`, e.g. `high`/`medium`/`low`);
+the planner picks it per task — high for architecture/debugging, low for
+mechanical chores.
 
 ## Roles & custom agents
 

@@ -26,6 +26,11 @@ class TestBuildCommand:
         assert cmd[cmd.index("--agent") + 1] == "w"
         assert cmd[-1] == "p"
 
+    def test_effort_emits_variant_flag(self, tmp_path):
+        cmd = Dispatcher.build_command(Config(), tmp_path, "p", variant="high")
+        assert cmd[cmd.index("--variant") + 1] == "high"
+        assert "--variant" not in Dispatcher.build_command(Config(), tmp_path, "p")
+
 
 class TestParseHandoff:
     def test_parses_last_block(self):
