@@ -159,6 +159,9 @@ class SessionRunner:
             raise
         deadline = started + timeout
         session_gone = False
+        last_msg_count = 0
+        stable_since: float | None = None
+        STABLE_WINDOW = 3.0
         while True:
             error = self.tap.pop_error(session_id)
             if error is not None:
@@ -169,17 +172,24 @@ class SessionRunner:
                 session_gone = True
             if session_gone:
                 messages = self.client.messages(session_id, directory)
-                if len(messages) > baseline:
-                    text = self._assistant_text(messages)
-                    if text:
-                        elapsed = time.monotonic() - started
-                        log.info(
-                            "session %s completed in %.1fs (%d chars)",
-                            session_id,
-                            elapsed,
-                            len(text),
-                        )
-                        return RunResult(text=text, session_id=session_id)
+                msg_count = len(messages)
+                if msg_count > baseline:
+                    if msg_count == last_msg_count:
+                        if stable_since is None:
+                            stable_since = time.monotonic()
+                        elif time.monotonic() - stable_since >= STABLE_WINDOW:
+                            text = self._assistant_text(messages)
+                            elapsed = time.monotonic() - started
+                            log.info(
+                                "session %s completed in %.1fs (%d chars)",
+                                session_id,
+                                elapsed,
+                                len(text),
+                            )
+                            return RunResult(text=text, session_id=session_id)
+                    else:
+                        stable_since = None
+                        last_msg_count = msg_count
             if time.monotonic() >= deadline:
                 self.abort_session(handle)
                 raise TimeoutError(f"session {session_id} exceeded {timeout}s") from None
