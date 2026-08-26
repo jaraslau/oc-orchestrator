@@ -1,8 +1,12 @@
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
 from orchestrator.core.config import Config, save_config
+from orchestrator.orchestration import service
+from orchestrator.runtime.client import SessionHandle
+from orchestrator.runtime.dispatcher import Dispatcher
 
 
 @pytest.fixture()
@@ -23,55 +27,61 @@ def repo(tmp_path):
     return r
 
 
-@pytest.fixture()
-def fake_worker(tmp_path):
-    """Factory for fake `opencode` binaries with scriptable behavior."""
+HANDOFF_OK = """```handoff
+TASK: TASK-001
+STATUS: DONE
+BRANCH: agent/task-001-demo
+COMMIT: abc1234
+SUMMARY: did the thing
+FILES CHANGED: src/x.py
+TESTS RUN: pytest
+TEST RESULTS: 3 passed
+KNOWN ISSUES: none
+NOTES FOR MANAGER: none
+```"""
 
-    def make(body: str) -> str:
-        bindir = tmp_path / "fakebin"
-        bindir.mkdir(exist_ok=True)
-        exe = bindir / "opencode"
-        exe.write_text(f"#!/bin/sh\n{body}\n")
-        exe.chmod(0o755)
-        return str(exe)
-
-    return make
-
-
-HANDOFF_OK = (
-    'echo "working..."\n'
-    "cat <<'BLOCK'\n"
-    "```handoff\n"
-    "TASK: TASK-001\n"
-    "STATUS: DONE\n"
-    "BRANCH: agent/task-001-demo\n"
-    "COMMIT: abc1234\n"
-    "SUMMARY: did the thing\n"
-    "FILES CHANGED: src/x.py\n"
-    "TESTS RUN: pytest\n"
-    "TEST RESULTS: 3 passed\n"
-    "KNOWN ISSUES: none\n"
-    "NOTES FOR MANAGER: none\n"
-    "```\n"
-    "BLOCK\n"
-)
-
-HANDOFF_FAIL = (
-    "cat <<'BLOCK'\n"
-    "```handoff\n"
-    "TASK: TASK-001\n"
-    "STATUS: FAILED\n"
-    "SUMMARY: could not do the thing\n"
-    "```\n"
-    "BLOCK\n"
-    "exit 0\n"
-)
+HANDOFF_FAIL = """```handoff
+TASK: TASK-001
+STATUS: FAILED
+SUMMARY: could not do the thing
+```"""
 
 
-def configured(repo, worker_bin: str) -> Config:
-    config = Config(opencode_bin=worker_bin, execution_backend="cli")
+class FakeRunner:
+    def __init__(self, behavior=HANDOFF_OK):
+        self.behavior = behavior
+        self.calls = []
+        self.aborted = []
+
+    def run(
+        self, prompt, cwd, *, agent=None, model=None, variant=None, timeout=None, on_session=None
+    ):
+        self.calls.append(
+            {"prompt": prompt, "cwd": cwd, "agent": agent, "model": model, "variant": variant}
+        )
+        handle = SessionHandle(f"ses_{len(self.calls)}", str(cwd), model or "")
+        if on_session is not None:
+            on_session(handle)
+        if isinstance(self.behavior, Exception):
+            raise self.behavior
+        text = self.behavior(prompt, cwd) if callable(self.behavior) else self.behavior
+        return SimpleNamespace(
+            text=text,
+            session_id=handle.session_id,
+            models_tried=[model or "m/default"],
+            failed_over=False,
+        )
+
+    def abort_session(self, handle):
+        self.aborted.append(handle.session_id)
+
+
+def configured(repo, behavior=HANDOFF_OK) -> FakeRunner:
+    config = Config()
     save_config(repo, config)
-    return config
+    runner = FakeRunner(behavior)
+    service._dispatchers[str(repo.resolve())] = Dispatcher(repo, runner)
+    return runner
 
 
 def wait_until(fn, timeout: float = 8.0, interval: float = 0.05):

@@ -276,16 +276,17 @@ class TestDispatchInstructions:
         assert "Additional instructions:" in prompt
         assert "rotate tokens" in prompt and "401" in prompt
 
-    def test_dispatch_passes_instructions_to_worker_prompt(self, repo, fake_worker):
-        from tests.conftest import HANDOFF_OK, configured
+    def test_dispatch_passes_instructions_to_worker_prompt(self, repo):
+        from tests.conftest import configured
 
-        configured(repo, fake_worker(HANDOFF_OK))
+        configured(repo)
         task = service.create_task(repo, title="Redo")
         ledger = Ledger.load(repo / ".orchestrator" / "ledger.json")
         ledger.update_status(task["id"], TaskStatus.CHANGES_REQUESTED)
         ledger.save()
 
         service.dispatch_task(repo, task["id"], instructions="map errors to 401")
+        service.task_status(repo, task["id"], timeout=1)
         log = repo / ".orchestrator" / "logs" / f"{task['id'].lower()}.log"
         # worker echoes nothing about prompt; verify via registry worktree instead
         assert log.exists()  # spawned successfully

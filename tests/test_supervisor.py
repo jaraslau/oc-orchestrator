@@ -12,7 +12,7 @@ from orchestrator.orchestration.supervisor import (
     plan_tasks,
     run_goal,
 )
-from tests.conftest import HANDOFF_OK, configured
+from tests.conftest import configured
 
 
 class TestExtractJson:
@@ -68,25 +68,26 @@ class TestParsePlan:
 
 
 class TestPlanRetry:
-    def test_retries_once_with_feedback(self):
+    def test_retries_once_with_feedback(self, monkeypatch):
         calls = []
 
-        def flaky(root, config, prompt, model=None):
+        def flaky(root, prompt, *, model=None):
             calls.append(prompt)
             if len(calls) == 1:
                 return "total garbage"
             return '```json\n{"tasks": [{"title": "ok"}]}\n```'
 
-        plans = plan_tasks("/tmp/x", Config(), "goal", runner=flaky)
+        monkeypatch.setattr("orchestrator.orchestration.supervisor.call_llm", flaky)
+        plans = plan_tasks("/tmp/x", Config(), "goal")
         assert [p.title for p in plans] == ["ok"]
         assert len(calls) == 2
         assert "not valid plan JSON" in calls[1]
 
 
 @pytest.fixture()
-def fast_factory(repo, fake_worker):
+def fast_factory(repo):
     """Repo wired for run_goal with instant fake workers."""
-    configured(repo, fake_worker(HANDOFF_OK))
+    configured(repo)
     return repo
 
 
@@ -168,32 +169,22 @@ class TestRunGoal:
         assert not (repo / ".orchestrator").exists()
 
     def test_planned_model_flows_to_dispatch_command(self, fast_factory):
-        from unittest.mock import patch
+        from orchestrator.orchestration import service
 
-        import orchestrator.runtime.dispatcher as dispatcher_mod
-
-        recorded = {}
-        original = dispatcher_mod.Dispatcher.__dict__["build_command"]
-
-        def spy(config, worktree, prompt, model=None, agent_name=None, variant=None):
-            recorded["model"] = model
-            recorded["variant"] = variant
-            return original.__func__(config, worktree, prompt, model, agent_name, variant)
-
-        with patch.object(dispatcher_mod.Dispatcher, "build_command", staticmethod(spy)):
-            plans = [PlannedTask(title="Heavy lift", model="anthropic/opus", effort="high")]
-            run_goal(
-                fast_factory,
-                "goal",
-                max_loops=15,
-                poll_seconds=0.05,
-                planner=lambda root, config, goal: plans,
-                gate_runner=lambda wt, cfg: (True, ""),
-                reviewer=_approve_all(),
-                io=lambda s: None,
-            )
-        assert recorded["model"] == "anthropic/opus"
-        assert recorded["variant"] == "high"
+        runner = service.get_dispatcher(fast_factory)._runner
+        plans = [PlannedTask(title="Heavy lift", model="anthropic/opus", effort="high")]
+        run_goal(
+            fast_factory,
+            "goal",
+            max_loops=15,
+            poll_seconds=0.05,
+            planner=lambda root, config, goal: plans,
+            gate_runner=lambda wt, cfg: (True, ""),
+            reviewer=_approve_all(),
+            io=lambda s: None,
+        )
+        assert runner.calls[0]["model"] == "anthropic/opus"
+        assert runner.calls[0]["variant"] == "high"
 
     def test_planned_effort_persists_on_task(self, fast_factory):
         plans = [PlannedTask(title="Tricky bug", effort="high")]

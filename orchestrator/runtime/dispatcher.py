@@ -1,18 +1,8 @@
-"""Background worker management with two engines.
-
-- cli (legacy): detached `opencode run` subprocesses; state survives restarts.
-- server (default): sessions on a shared opencode server owned by this
-  process, with model failover and live event logging.
-
-Both engines honor the same registry/log/handoff contract.
-"""
+"""Background worker management for sessions on a shared opencode server."""
 
 from __future__ import annotations
 
-import os
 import re
-import signal
-import subprocess
 import threading
 import traceback
 from dataclasses import asdict, dataclass
@@ -38,7 +28,6 @@ def _now() -> str:
 @dataclass
 class DispatchRecord:
     task_id: str
-    pid: int | None
     branch: str
     worktree: str
     log_path: str
@@ -47,7 +36,6 @@ class DispatchRecord:
     ended_at: str | None = None
     session_id: str | None = None
     model_used: str | None = None
-    engine: str = "cli"
 
 
 def parse_handoff(text: str) -> dict[str, str] | None:
@@ -68,15 +56,10 @@ def parse_handoff(text: str) -> dict[str, str] | None:
 
 
 class Dispatcher:
-    def __init__(self, root: Path, runner: Any | None = None) -> None:
+    def __init__(self, root: Path, runner: Any) -> None:
         self.root = root
-        self._popens: dict[str, subprocess.Popen[bytes]] = {}
         self._runner = runner
         self._handles: dict[str, Any] = {}
-
-    @property
-    def engine(self) -> str:
-        return "server" if self._runner is not None else "cli"
 
     @property
     def registry_path(self) -> Path:
@@ -90,23 +73,6 @@ class Dispatcher:
 
     def _save_registry(self, dispatches: dict[str, dict[str, Any]]) -> None:
         write_json_atomic(self.registry_path, {"dispatches": dispatches})
-
-    @staticmethod
-    def build_command(
-        config: Config,
-        worktree: Path,
-        prompt: str,
-        model: str | None = None,
-        agent_name: str | None = None,
-        variant: str | None = None,
-    ) -> list[str]:
-        cmd = [config.opencode_bin, "run", "--auto", "--dir", str(worktree)]
-        if model:
-            cmd += ["-m", model]
-        if variant:
-            cmd += ["--variant", variant]
-        cmd += ["--agent", agent_name or config.worker_agent, prompt]
-        return cmd
 
     def spawn(
         self,
@@ -124,66 +90,12 @@ class Dispatcher:
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = logs_dir / f"{task_id.lower()}.log"
 
-        if self._runner is not None:
-            return self._spawn_server(
-                config=config,
-                task_id=task_id,
-                branch=branch,
-                worktree=worktree,
-                prompt=prompt,
-                model=model,
-                agent_name=agent_name,
-                variant=variant,
-                log_path=log_path,
-            )
-
-        cmd = self.build_command(config, worktree, prompt, model, agent_name, variant)
-
-        with log_path.open("wb") as log:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                cwd=worktree,
-                start_new_session=True,
-            )
-
         record = DispatchRecord(
             task_id=task_id,
-            pid=proc.pid,
             branch=branch,
             worktree=str(worktree),
             log_path=str(log_path),
             started_at=_now(),
-        )
-        self._popens[task_id] = proc
-        registry = self._load_registry()
-        registry[task_id] = asdict(record)
-        self._save_registry(registry)
-        return record
-
-    def _spawn_server(
-        self,
-        *,
-        config: Config,
-        task_id: str,
-        branch: str,
-        worktree: Path,
-        prompt: str,
-        model: str | None,
-        agent_name: str | None,
-        variant: str | None,
-        log_path: Path,
-    ) -> DispatchRecord:
-        record = DispatchRecord(
-            task_id=task_id,
-            pid=None,
-            branch=branch,
-            worktree=str(worktree),
-            log_path=str(log_path),
-            started_at=_now(),
-            engine="server",
         )
         registry = self._load_registry()
         registry[task_id] = asdict(record)
@@ -233,22 +145,6 @@ class Dispatcher:
         if record.exit_code is not None:
             return record
 
-        proc = self._popens.get(task_id)
-        if proc is not None:
-            code = proc.poll()
-            if code is not None:
-                self._finalize(record, code, registry)
-            return record
-
-        # Post-restart: no Popen handle; infer from liveness.
-        if record.engine == "server" or record.pid is None:
-            return record
-        try:
-            os.kill(record.pid or 0, 0)
-        except ProcessLookupError:
-            self._finalize(record, None, registry)  # ended while we were away
-        except PermissionError:
-            pass  # owned by another user but running
         return record
 
     def _finalize(
@@ -263,24 +159,13 @@ class Dispatcher:
         self._save_registry(registry)
 
     def terminate(self, task_id: str) -> bool:
-        """Terminate a running worker (abort session or SIGTERM process group)."""
+        """Abort a running worker session."""
         handle = self._handles.get(task_id)
         if handle is not None:
             self._runner.abort_session(handle)
             log.info("aborted session %s for task %s", handle.session_id, task_id)
             return True
-        proc = self._popens.get(task_id)
-        if proc is not None and proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGTERM)
-            return True
-        record = self.poll(task_id)
-        if record is None or record.exit_code is not None or record.pid is None:
-            return False
-        try:
-            os.killpg(record.pid, signal.SIGTERM)
-            return True
-        except ProcessLookupError:
-            return False
+        return False
 
     @staticmethod
     def read_log(record: DispatchRecord, tail_bytes: int = LOG_TAIL_BYTES) -> str:

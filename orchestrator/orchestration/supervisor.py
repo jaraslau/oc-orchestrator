@@ -22,7 +22,6 @@ from orchestrator.orchestration.service import (
     shutdown_runtime,
     task_status,
 )
-from orchestrator.runtime.llm import LlmRunner
 
 Io = Callable[[str], None]
 GateRunner = Callable[[Path, Config], tuple[bool, str]]
@@ -32,7 +31,6 @@ log = get("supervisor")
 
 TERMINAL_OK = {"MERGED"}
 TERMINAL_GIVE_UP = {"BLOCKED", "FAILED", "CANCELLED"}
-ACTIVE_STATUSES = {"READY", "DISPATCHED", "WORKING", "REVIEWING", "CHANGES_REQUESTED"}
 
 
 class PlanningError(RuntimeError):
@@ -125,16 +123,10 @@ def parse_plan(text: str) -> list[PlannedTask]:
     return plans
 
 
-def _service_llm(root: Path, config: Config, prompt: str, model: str | None = None) -> str:
-    return call_llm(root, prompt, model=model)
-
-
-def plan_tasks(
-    root: Path, config: Config, goal: str, runner: LlmRunner = _service_llm
-) -> list[PlannedTask]:
+def plan_tasks(root: Path, config: Config, goal: str) -> list[PlannedTask]:
     prompt = PLAN_PROMPT.format(goal=goal)
     try:
-        plans = parse_plan(runner(root, config, prompt, config.planner_model))
+        plans = parse_plan(call_llm(root, prompt, model=config.planner_model))
         log.info("planner produced %d task(s)", len(plans))
         return plans
     except (PlanningError, json.JSONDecodeError, RuntimeError):
@@ -143,7 +135,7 @@ def plan_tasks(
             "Respond again with ONLY the fenced JSON block."
         )
         log.warning("planner response invalid; retrying once with corrective feedback")
-        return parse_plan(runner(root, config, prompt + "\n\n" + feedback, config.planner_model))
+        return parse_plan(call_llm(root, prompt + "\n\n" + feedback, model=config.planner_model))
 
 
 def create_planned_tasks(root: Path, plans: list[PlannedTask]) -> list[str]:
@@ -272,7 +264,7 @@ def run_goal(
     root = Path(root)
     config = load_config(root)
     gate = gate_runner or default_gate
-    log.info("run_goal start: %r (backend=%s)", goal[:80], config.execution_backend)
+    log.info("run_goal start: %r", goal[:80])
 
     try:
         io(f"planning: {goal[:100]}")
@@ -301,14 +293,8 @@ def run_goal(
                     continue
                 try:
                     record = dispatch_task(root, tid)
-                    engine_note = (
-                        f", engine={record['worker_engine']}" if record.get("worker_engine") else ""
-                    )
                     model_note = f", model={record['model']}" if record.get("model") else ""
-                    io(
-                        f"[{loop}] dispatched {tid}{engine_note}"
-                        f"{model_note} ({snap['task']['title']})"
-                    )
+                    io(f"[{loop}] dispatched {tid}{model_note} ({snap['task']['title']})")
                     progressed = True
                 except DispatchBlocked:
                     pass

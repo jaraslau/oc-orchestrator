@@ -4,8 +4,7 @@ from orchestrator.core.config import Config
 from orchestrator.core.errors import InvalidState
 from orchestrator.core.ledger import Ledger
 from orchestrator.orchestration import service
-from orchestrator.runtime.dispatcher import Dispatcher
-from tests.conftest import HANDOFF_OK, configured
+from tests.conftest import configured
 
 
 def make_agent_def(repo, name="orchestrator-tester", content=None):
@@ -28,31 +27,34 @@ class TestRoleAssignment:
         with pytest.raises(InvalidState, match="agent definition not found"):
             service.create_task(repo, title="x", role="orchestrator-ninja")
 
-    def test_dispatch_resolves_task_role_over_default(self, repo, fake_worker):
-        configured(repo, fake_worker(HANDOFF_OK))
+    def test_dispatch_resolves_task_role_over_default(self, repo):
+        configured(repo)
         make_agent_def(repo)  # orchestrator-tester
         task = service.create_task(repo, title="Test it", role="orchestrator-tester")
         result = service.dispatch_task(repo, task["id"])
         assert result["task"]["agent"] == "orchestrator-tester"
+        service.task_status(repo, task["id"], timeout=1)
 
-    def test_dispatch_explicit_role_beats_task_role(self, repo, fake_worker):
-        configured(repo, fake_worker(HANDOFF_OK))
+    def test_dispatch_explicit_role_beats_task_role(self, repo):
+        configured(repo)
         make_agent_def(repo, "orchestrator-tester")
         make_agent_def(repo, "orchestrator-reviewer")
         task = service.create_task(repo, title="Check", role="orchestrator-tester")
         result = service.dispatch_task(repo, task["id"], role="orchestrator-reviewer")
         assert result["task"]["agent"] == "orchestrator-reviewer"
+        service.task_status(repo, task["id"], timeout=1)
 
-    def test_dispatch_default_when_no_roles_assigned(self, repo, fake_worker):
-        configured(repo, fake_worker(HANDOFF_OK))
+    def test_dispatch_default_when_no_roles_assigned(self, repo):
+        configured(repo)
         # no custom agents installed: default worker must still validate via its file
         make_agent_def(repo, "orchestrator-worker", content="---\nmode: primary\n---\ndefault\n")
         task = service.create_task(repo, title="Plain")
         result = service.dispatch_task(repo, task["id"])
         assert result["task"]["agent"] == "orchestrator-worker"
+        service.task_status(repo, task["id"], timeout=1)
 
-    def test_dispatch_fails_fast_on_missing_role_file(self, repo, fake_worker):
-        configured(repo, fake_worker(HANDOFF_OK))
+    def test_dispatch_fails_fast_on_missing_role_file(self, repo):
+        configured(repo)
         task = service.create_task(repo, title="x")
         ledger = Ledger.load(repo / ".orchestrator" / "ledger.json")
         t = ledger.get(task["id"])
@@ -60,15 +62,6 @@ class TestRoleAssignment:
         ledger.save()
         with pytest.raises(InvalidState, match="orchestrator-ghost"):
             service.dispatch_task(repo, task["id"])
-
-    def test_build_command_uses_agent_override(self, tmp_path):
-        cmd = Dispatcher.build_command(
-            Config(worker_agent="orchestrator-worker"),
-            tmp_path,
-            "p",
-            agent_name="orchestrator-reviewer",
-        )
-        assert cmd[cmd.index("--agent") + 1] == "orchestrator-reviewer"
 
     def test_prompt_greets_resolved_role(self, repo):
         from orchestrator.orchestration.prompts import render_delegation

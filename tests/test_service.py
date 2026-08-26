@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from orchestrator.core.config import load_config
@@ -24,9 +26,8 @@ class TestCreateTask:
 
 
 class TestDispatchLifecycle:
-    def test_success_flow(self, repo, fake_worker):
-        worker = fake_worker(HANDOFF_OK)
-        configured(repo, worker)
+    def test_success_flow(self, repo):
+        configured(repo)
         task = make_task(repo)
 
         result = service.dispatch_task(repo, task["id"])
@@ -38,26 +39,25 @@ class TestDispatchLifecycle:
         assert final["worker"]["exit_code"] == 0
         assert final["task"]["handoff"]["SUMMARY"] == "did the thing"
 
-    def test_failure_exit_code(self, repo, fake_worker):
-        worker = fake_worker('echo "boom" >&2\nexit 3')
-        configured(repo, worker)
+    def test_failure_exit_code(self, repo):
+        configured(repo, RuntimeError("boom"))
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
 
         final = service.task_status(repo, task["id"], timeout=10.0)
         assert final["task"]["status"] == "FAILED"
-        assert "exited 3" in final["task"]["last_result"]
+        assert "exited 1" in final["task"]["last_result"]
 
-    def test_handoff_failed_status_wins_on_zero_exit(self, repo, fake_worker):
-        configured(repo, fake_worker(HANDOFF_FAIL))
+    def test_handoff_failed_status_wins_on_zero_exit(self, repo):
+        configured(repo, HANDOFF_FAIL)
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
 
         final = service.task_status(repo, task["id"], timeout=10.0)
         assert final["task"]["status"] == "FAILED"
 
-    def test_zero_exit_without_handoff(self, repo, fake_worker):
-        configured(repo, fake_worker('echo "done"'))
+    def test_zero_exit_without_handoff(self, repo):
+        configured(repo, "done")
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
 
@@ -65,8 +65,9 @@ class TestDispatchLifecycle:
         assert final["task"]["status"] == "REVIEWING"
         assert "no handoff block" in final["task"]["last_result"]
 
-    def test_working_transition_observed(self, repo, fake_worker):
-        configured(repo, fake_worker("sleep 1.5\n" + HANDOFF_OK))
+    def test_working_transition_observed(self, repo):
+        gate = threading.Event()
+        configured(repo, lambda prompt, cwd: (gate.wait(timeout=2), HANDOFF_OK)[1])
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
 
@@ -75,13 +76,14 @@ class TestDispatchLifecycle:
             timeout=2.0,
         )
         assert saw_working is True
+        gate.set()
         final = service.task_status(repo, task["id"], timeout=15.0)
         assert final["task"]["status"] == "REVIEWING"
 
 
 class TestDispatchGuards:
-    def test_unmet_dependency_blocks(self, repo, fake_worker):
-        configured(repo, fake_worker(HANDOFF_OK))
+    def test_unmet_dependency_blocks(self, repo):
+        configured(repo)
         a = make_task(repo, title="Base")
         b = service.create_task(repo, title="Dependent", dependencies=[a["id"]])
 
@@ -93,9 +95,10 @@ class TestDispatchGuards:
         ledger.save()
         result = service.dispatch_task(repo, b["id"])
         assert result["task"]["status"] == "DISPATCHED"
+        service.task_status(repo, b["id"], timeout=1)
 
-    def test_terminal_task_cannot_dispatch(self, repo, fake_worker):
-        configured(repo, fake_worker(HANDOFF_OK))
+    def test_terminal_task_cannot_dispatch(self, repo):
+        configured(repo)
         task = make_task(repo)
         ledger = Ledger.load(repo / ".orchestrator" / "ledger.json")
         ledger.update_status(task["id"], TaskStatus.MERGED)
@@ -103,34 +106,39 @@ class TestDispatchGuards:
         with pytest.raises(InvalidState):
             service.dispatch_task(repo, task["id"])
 
-    def test_redispatch_after_failure_reuses_branch(self, repo, fake_worker):
-        configured(repo, fake_worker("exit 1"))
+    def test_redispatch_after_failure_reuses_branch(self, repo):
+        configured(repo, RuntimeError("failed"))
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
         service.task_status(repo, task["id"], timeout=10.0)  # FAILED now
 
-        configured(repo, fake_worker(HANDOFF_OK))  # fixed worker
+        configured(repo)  # fixed worker
         again = service.dispatch_task(repo, task["id"])
         assert again["task"]["branch"] == task["branch"]
+        service.task_status(repo, task["id"], timeout=1)
 
-    def test_cancel_terminates_worker(self, repo, fake_worker):
-        configured(repo, fake_worker("sleep 30\n" + HANDOFF_OK))
+    def test_cancel_terminates_worker(self, repo):
+        gate = threading.Event()
+        configured(repo, lambda prompt, cwd: (gate.wait(timeout=2), HANDOFF_OK)[1])
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
         cancelled = service.cancel_task(repo, task["id"])
+        gate.set()
         assert cancelled["status"] == "CANCELLED"
+        service.task_status(repo, task["id"], timeout=1)
 
 
 class TestCleanup:
-    def test_cleanup_worktree(self, repo, fake_worker):
-        configured(repo, fake_worker(HANDOFF_OK))
+    def test_cleanup_worktree(self, repo):
+        configured(repo)
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
+        service.task_status(repo, task["id"], timeout=1)
         wt = repo / ".orchestrator" / "worktrees" / task["branch"]
         assert wt.is_dir()
         assert service.cleanup_worktree(repo, task["id"]) is True
         assert not wt.exists()
 
-    def test_config_roundtrip_has_opencode_bin(self, repo, fake_worker):
-        configured(repo, fake_worker("exit 0"))
+    def test_config_roundtrip_has_opencode_bin(self, repo):
+        configured(repo)
         assert load_config(repo).opencode_bin.endswith("opencode")

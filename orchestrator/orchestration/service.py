@@ -17,7 +17,6 @@ from orchestrator.runtime.dispatcher import (
 )
 from orchestrator.runtime.events import EventTap
 from orchestrator.runtime.github import GhClient, pr_number_from_url
-from orchestrator.runtime.llm import run_llm
 from orchestrator.runtime.opencode_server import OpencodeServer
 from orchestrator.runtime.runner import SessionRunner
 from orchestrator.runtime.worktrees import branch_name, ensure_worktree, remove_worktree
@@ -44,21 +43,20 @@ class ServerRuntime:
 _runtimes: dict[str, ServerRuntime] = {}
 
 
-def get_runtime(root: Path) -> ServerRuntime | None:
-    """Shared opencode-server runtime per repo; None when backend is 'cli'."""
+def get_runtime(root: Path) -> ServerRuntime:
+    """Shared opencode-server runtime per repo."""
     key = str(Path(root).resolve())
     if key in _runtimes:
         return _runtimes[key]
-    config = load_config(Path(key))
-    if config.execution_backend == "cli":
-        return None
-    runtime = ServerRuntime(Path(key), config)
+    runtime = ServerRuntime(Path(key), load_config(Path(key)))
     _runtimes[key] = runtime
     return runtime
 
 
 def shutdown_runtime(root: Path) -> None:
-    runtime = _runtimes.pop(str(Path(root).resolve()), None)
+    key = str(Path(root).resolve())
+    runtime = _runtimes.pop(key, None)
+    _dispatchers.pop(key, None)
     if runtime is not None:
         runtime.close()
 
@@ -68,9 +66,7 @@ def get_dispatcher(root: Path) -> Dispatcher:
     key = str(Path(root).resolve())
     if key in _dispatchers:
         return _dispatchers[key]
-    runtime = get_runtime(root)
-    runner = runtime.runner if runtime is not None else None
-    _dispatchers[key] = Dispatcher(Path(key), runner=runner)
+    _dispatchers[key] = Dispatcher(Path(key), get_runtime(root).runner)
     return _dispatchers[key]
 
 
@@ -83,14 +79,8 @@ def call_llm(
     effort: str | None = None,
     timeout: float = 900.0,
 ) -> str:
-    """Planner/reviewer calls: server session with failover when possible."""
-    runtime = get_runtime(root)
-    if runtime is None:
-        config = load_config(Path(root))
-        return run_llm(
-            Path(root), config, prompt, model=model, agent=agent, timeout=timeout, effort=effort
-        )
-    result = runtime.runner.run(
+    """Run a planner/reviewer session with failover."""
+    result = get_runtime(root).runner.run(
         prompt,
         Path(root),
         agent=agent,
@@ -206,8 +196,6 @@ def dispatch_task(
         "task": task.to_dict(),
         "worktree": str(worktree),
         "log": record.log_path,
-        "pid": record.pid,
-        "worker_engine": record.engine,
         "model": model or task.model or config.worker_model,
     }
 
@@ -308,11 +296,9 @@ def _record_dict(record: DispatchRecord | None) -> dict | None:
         None
         if record is None
         else {
-            "pid": record.pid,
             "exit_code": record.exit_code,
             "log": record.log_path,
             "worktree": record.worktree,
-            "engine": record.engine,
             "session_id": record.session_id,
             "model_used": record.model_used or None,
         }

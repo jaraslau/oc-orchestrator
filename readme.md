@@ -129,7 +129,6 @@ the changes-requested loop.
 | `worker_agent` | `orchestrator-worker` | default persona |
 | `worker_model` / `planner_model` / `reviewer_model` | `null` | model pins per role; unset = opencode default |
 | `fallback_models` | `[]` | ordered chain of backup models; on provider failure the next model is tried automatically |
-| `execution_backend` | `"server"` | `"server"` (shared opencode server, failover, live events) or `"cli"` (detached subprocesses) |
 | `worker_timeout` | `3600` | seconds before a running worker is aborted |
 | `gate_commands` | `[]` | shell commands run in the worktree before review, e.g. `["poetry run pytest -q", "ruff check ."]` |
 | `gh_bin` | `"gh"` | GitHub CLI binary |
@@ -157,8 +156,7 @@ session lifecycle events.
 The `worker_status` worker dict (from `task_status`) now includes `engine`,
 `session_id`, and `model_used` — the actual model that completed the work.
 
-`"server"` backend (default) uses a shared `opencode serve` instance;
-`"cli"` falls back to the proven detached-subprocess model.
+Workers use a shared `opencode serve` instance.
 
 ## Roles & custom agents
 
@@ -199,7 +197,6 @@ orchestrator/
   runtime/
     dispatcher.py           background spawn, registry, log capture, handoff parse
     worktrees.py            ensure/remove per-task worktrees
-    llm.py                  synchronous opencode wrapper (planner/reviewer)
     github.py               GhClient over the gh CLI
   orchestration/
     prompts.py              delegation prompt rendering
