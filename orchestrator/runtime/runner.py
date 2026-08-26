@@ -1,14 +1,13 @@
 """Server-backed session execution with model failover.
 
 Runs a prompt against the shared opencode server: preflights the model chain,
-creates a session, prompts asynchronously, then polls status while the event
-tap captures errors. Provider-sided failures trigger failover to the next
-model in the chain; anything else fails fast with full diagnosis.
+creates a session, then uses OpenCode's blocking message endpoint to wait for
+the completed assistant turn. Provider-sided failures trigger failover to the
+next model in the chain; anything else fails fast with full diagnosis.
 """
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,8 +68,10 @@ class SessionRunner:
         validated: list[str] = []
         for ref in chain.models:
             try:
-                parse_model_ref(ref, providers, default_provider)
-                validated.append(ref)
+                provider_id, model_id = parse_model_ref(ref, providers, default_provider)
+                normalized = f"{provider_id}/{model_id}"
+                if normalized not in validated:
+                    validated.append(normalized)
             except OrchestratorError:
                 log.error("chain entry '%s' unavailable on server; dropping", ref)
         chain.models = validated
@@ -115,6 +116,7 @@ class SessionRunner:
                 log.error("model %s failed (%s): %s", current, kind.value, exc)
                 if kind not in PROVIDER_SIDED or chain.advance(kind.value) is None:
                     raise
+        raise OrchestratorError("model chain exhausted without a result")
 
     def abort_session(self, handle: SessionHandle) -> None:
         try:
@@ -145,56 +147,29 @@ class SessionRunner:
             model,
             f" variant={variant}" if variant else "",
         )
-        started = time.monotonic()
-        baseline = self._message_count(session_id, directory)
         try:
-            self.client.prompt_async(session_id, prompt, model, agent, variant, directory)
-        except OpencodeApiError:
+            message = self.client.prompt(
+                session_id,
+                prompt,
+                model,
+                agent,
+                variant,
+                directory,
+                timeout,
+            )
+        except (OpencodeApiError, TimeoutError):
             self.abort_session(handle)
             raise
-        deadline = started + timeout
-        session_gone = False
-        last_msg_count = 0
-        stable_since: float | None = None
-        STABLE_WINDOW = 10.0
-        while True:
-            error = self.tap.pop_error(session_id)
-            if error is not None:
-                self.abort_session(handle)
-                msg = f"{error.get('name', 'UnknownError')}: {error.get('message', '')}"
-                raise RuntimeError(msg) from None
-            if not session_gone and not self.client.session_alive(session_id):
-                session_gone = True
-            if session_gone:
-                messages = self.client.messages(session_id, directory)
-                msg_count = len(messages)
-                if msg_count > baseline:
-                    if msg_count == last_msg_count:
-                        if stable_since is None:
-                            stable_since = time.monotonic()
-                        elif time.monotonic() - stable_since >= STABLE_WINDOW:
-                            text = self._assistant_text(messages)
-                            elapsed = time.monotonic() - started
-                            log.info(
-                                "session %s completed in %.1fs (%d chars)",
-                                session_id,
-                                elapsed,
-                                len(text),
-                            )
-                            return RunResult(text=text, session_id=session_id)
-                    else:
-                        stable_since = None
-                        last_msg_count = msg_count
-            if time.monotonic() >= deadline:
-                self.abort_session(handle)
-                raise TimeoutError(f"session {session_id} exceeded {timeout}s") from None
-            time.sleep(self.poll_interval)
-
-    def _message_count(self, session_id: str, directory: str) -> int:
-        try:
-            return len(self.client.messages(session_id, directory))
-        except OpencodeApiError:
-            return 0
+        error = self.tap.pop_error(session_id)
+        if error is not None:
+            self.abort_session(handle)
+            msg = f"{error.get('name', 'UnknownError')}: {error.get('message', '')}"
+            raise RuntimeError(msg) from None
+        text = self._assistant_text([message])
+        if not text:
+            raise RuntimeError(f"session {session_id} completed without assistant text")
+        log.info("session %s completed (%d chars)", session_id, len(text))
+        return RunResult(text=text, session_id=session_id)
 
     @staticmethod
     def _assistant_text(messages: list[dict[str, Any]]) -> str:

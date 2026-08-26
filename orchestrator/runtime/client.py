@@ -38,8 +38,14 @@ class OpencodeClient:
     ) -> Any:
         try:
             response = httpx.request(
-                method, f"{self.base_url}{path}", timeout=timeout or self._timeout, **kwargs
+                method,
+                f"{self.base_url}{path}",
+                timeout=timeout or self._timeout,
+                trust_env=False,
+                **kwargs,
             )
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(f"opencode request timed out: {exc}") from exc
         except httpx.HTTPError as exc:
             raise OpencodeApiError(0, f"connection failure: {exc}") from exc
         if response.status_code >= 400:
@@ -72,7 +78,7 @@ class OpencodeClient:
         session = self._request("POST", f"/session?directory={_q(directory)}", json=payload)
         return str(session["id"])
 
-    def prompt_async(
+    def prompt(
         self,
         session_id: str,
         text: str,
@@ -80,30 +86,35 @@ class OpencodeClient:
         agent: str | None,
         variant: str | None,
         directory: str,
-    ) -> None:
+        timeout: float,
+    ) -> dict[str, Any]:
+        """Send a prompt and wait for OpenCode's final assistant message.
+
+        OpenCode's synchronous message endpoint owns turn completion. Using it
+        avoids reconstructing completion from the eventually-consistent status
+        map or from an SSE stream that may reconnect.
+        """
         parts = [{"type": "text", "text": text}]
         call = dict(parts=parts, model=_model_param(model))
         if agent:
             call["agent"] = agent
         if variant:
             call["variant"] = variant
-        self._request(
-            "POST", f"/session/{session_id}/prompt_async?directory={_q(directory)}", json=call
+        response = self._request(
+            "POST",
+            f"/session/{session_id}/message?directory={_q(directory)}",
+            timeout=timeout,
+            json=call,
         )
-
-    def status(self) -> dict[str, dict[str, Any]]:
-        return self._request("GET", "/session/status") or {}
+        if not isinstance(response, dict):
+            raise OpencodeApiError(0, "server returned no assistant message")
+        return response
 
     def messages(self, session_id: str, directory: str) -> list[dict[str, Any]]:
         data = self._request("GET", f"/session/{session_id}/message?directory={_q(directory)}")
         if isinstance(data, list):
             return data
         return list((data or {}).get("rows", []))
-
-    def session_alive(self, session_id: str) -> bool:
-        """Check if a session is still in the server's status map."""
-        status = self.status()
-        return session_id in status
 
     def abort(self, session_id: str, directory: str) -> None:
         try:
@@ -113,7 +124,9 @@ class OpencodeClient:
                 raise
 
     def events(self) -> Iterator[dict[str, Any]]:
-        with httpx.stream("GET", f"{self.base_url}/event", timeout=None) as response:
+        with httpx.stream(
+            "GET", f"{self.base_url}/event", timeout=None, trust_env=False
+        ) as response:
             if response.status_code >= 400:
                 raise OpencodeApiError(response.status_code, "event stream failed")
             buffer: list[str] = []
@@ -123,8 +136,8 @@ class OpencodeClient:
                     continue
                 if line.strip() or not buffer:
                     continue
-                    with contextlib.suppress(json.JSONDecodeError):
-                        yield json.loads("\n".join(buffer))
+                with contextlib.suppress(json.JSONDecodeError):
+                    yield json.loads("\n".join(buffer))
                 buffer.clear()
 
 

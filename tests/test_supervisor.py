@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -156,6 +157,26 @@ class TestRunGoal:
         (t,) = lg.tasks.values()
         assert t.status == TaskStatus.BLOCKED
         assert "supervisor gave up" in (t.last_result or "")
+
+    def test_merge_failure_is_not_counted_as_success(self, fast_factory, monkeypatch):
+        def fail_merge(*args, **kwargs):
+            raise subprocess.CalledProcessError(1, "git merge", stderr="conflict")
+
+        monkeypatch.setattr("orchestrator.orchestration.supervisor._merge_branch", fail_merge)
+        rc = run_goal(
+            fast_factory,
+            "conflicting change",
+            max_loops=10,
+            poll_seconds=0.05,
+            planner=lambda root, config, goal: [PlannedTask(title="Conflict")],
+            gate_runner=lambda wt, cfg: (True, ""),
+            reviewer=_approve_all(),
+            io=lambda s: None,
+        )
+
+        assert rc == 1
+        task = next(iter(Ledger.load(ledger_path(fast_factory)).tasks.values()))
+        assert task.status == TaskStatus.BLOCKED
 
     def test_dry_run_creates_nothing(self, repo):
         rc = run_goal(

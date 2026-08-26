@@ -1,5 +1,6 @@
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from orchestrator.runtime.dispatcher import Dispatcher
@@ -79,3 +80,20 @@ def test_terminate_aborts_live_session(repo, tmp_path):
 
 def test_poll_returns_none_for_unknown_task(repo):
     assert Dispatcher(repo, FakeRunner()).poll("NOPE") is None
+
+
+def test_concurrent_registry_updates_preserve_every_task(repo, tmp_path):
+    dispatcher = Dispatcher(repo, FakeRunner())
+    template = spawn(dispatcher, tmp_path)
+    records = [replace(template, task_id=f"TASK-{i:03d}") for i in range(20)]
+    threads = [
+        threading.Thread(target=dispatcher._store_record, args=(record,)) for record in records
+    ]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    registry = dispatcher._load_registry()
+    assert all(record.task_id in registry for record in records)

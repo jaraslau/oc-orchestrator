@@ -60,19 +60,29 @@ class Dispatcher:
         self.root = root
         self._runner = runner
         self._handles: dict[str, Any] = {}
+        self._registry_lock = threading.RLock()
 
     @property
     def registry_path(self) -> Path:
         return state_dir(self.root) / DISPATCHES_FILENAME
 
     def _load_registry(self) -> dict[str, dict[str, Any]]:
-        if not self.registry_path.exists():
-            return {}
-        data = read_json(self.registry_path)
-        return data.get("dispatches", {})
+        with self._registry_lock:
+            if not self.registry_path.exists():
+                return {}
+            data = read_json(self.registry_path)
+            return data.get("dispatches", {})
 
     def _save_registry(self, dispatches: dict[str, dict[str, Any]]) -> None:
-        write_json_atomic(self.registry_path, {"dispatches": dispatches})
+        with self._registry_lock:
+            write_json_atomic(self.registry_path, {"dispatches": dispatches})
+
+    def _store_record(self, record: DispatchRecord) -> None:
+        """Atomically merge one record into the shared dispatch registry."""
+        with self._registry_lock:
+            registry = self._load_registry()
+            registry[record.task_id] = asdict(record)
+            self._save_registry(registry)
 
     def spawn(
         self,
@@ -97,9 +107,7 @@ class Dispatcher:
             log_path=str(log_path),
             started_at=_now(),
         )
-        registry = self._load_registry()
-        registry[task_id] = asdict(record)
-        self._save_registry(registry)
+        self._store_record(record)
 
         def work() -> None:
             self._handles[task_id] = None
@@ -118,7 +126,7 @@ class Dispatcher:
                 log_path.write_text(
                     f"[model used: {result.models_tried[-1]}]\n\n{result.text}\n", encoding="utf-8"
                 )
-                self._finalize(record, 0, self._load_registry())
+                self._finalize(record, 0)
                 log.info("task %s completed (session %s)", task_id, result.session_id)
             except Exception as exc:
                 diagnosis = "".join(traceback.format_exception_only(type(exc), exc)).strip()
@@ -127,7 +135,7 @@ class Dispatcher:
                     fh.write(f"\n[orchestrator] worker failed: {diagnosis}\n")
                 if record.model_used is None:
                     record.model_used = model or ""
-                self._finalize(record, 1, self._load_registry())
+                self._finalize(record, 1)
             finally:
                 self._handles.pop(task_id, None)
 
@@ -137,8 +145,8 @@ class Dispatcher:
 
     def poll(self, task_id: str) -> DispatchRecord | None:
         """Return the current record, updating exit status when discoverable."""
-        registry = self._load_registry()
-        raw = registry.get(task_id)
+        with self._registry_lock:
+            raw = self._load_registry().get(task_id)
         if raw is None:
             return None
         record = DispatchRecord(**raw)
@@ -151,12 +159,10 @@ class Dispatcher:
         self,
         record: DispatchRecord,
         exit_code: int | None,
-        registry: dict[str, dict[str, Any]],
     ) -> None:
         record.exit_code = exit_code
         record.ended_at = _now()
-        registry[record.task_id] = asdict(record)
-        self._save_registry(registry)
+        self._store_record(record)
 
     def terminate(self, task_id: str) -> bool:
         """Abort a running worker session."""

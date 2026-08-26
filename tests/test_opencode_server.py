@@ -37,7 +37,7 @@ def make_fake_binary(tmp_path, body):
 def test_start_parses_listening_url_and_stop_terminates(tmp_path, health_server):
     binary = make_fake_binary(
         tmp_path,
-        f'echo "opencode server listening on {health_server}"\nsleep 30',
+        f'echo "opencode server listening on {health_server}" >&2\nsleep 30',
     )
     server = OpencodeServer(binary, port=0, cwd=tmp_path)
     url = server.start()

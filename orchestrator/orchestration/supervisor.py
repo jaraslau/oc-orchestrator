@@ -327,8 +327,8 @@ def run_goal(
                         verdict, instructions = reviewer(task_ctx, diff, ok, gate_out)
 
                     if verdict == "approve":
-                        _finalize_merge(root, config, tid, t, io)
-                        merged += 1
+                        if _finalize_merge(root, config, tid, t, io):
+                            merged += 1
                     elif corrections[tid] < max_corrections:
                         corrections[tid] += 1
                         dispatch_task(root, tid, instructions=instructions or gate_out[-1500:])
@@ -380,12 +380,12 @@ def _give_up(root: Path, tid: str, note: str, io: Io) -> None:
     io(f"gave up on {tid}: {note[:120]}")
 
 
-def _finalize_merge(root: Path, config: Config, tid: str, t: dict, io: Io) -> None:
+def _finalize_merge(root: Path, config: Config, tid: str, t: dict, io: Io) -> bool:
     try:
         _merge_branch(root, t["branch"], f"{tid} {t['title']}")
     except subprocess.CalledProcessError as exc:
         _give_up(root, tid, f"merge failed: {exc.stderr[-300:]}", io)
-        return
+        return False
     lg = Ledger.load(ledger_path(root))
     lg.update_status(tid, TaskStatus.MERGED)
     got = lg.get(tid)
@@ -393,3 +393,4 @@ def _finalize_merge(root: Path, config: Config, tid: str, t: dict, io: Io) -> No
     lg.save()
     cleanup_worktree(root, tid)
     io(f"merged {tid} ({t['title']})")
+    return True
