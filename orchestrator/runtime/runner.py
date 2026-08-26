@@ -161,7 +161,7 @@ class SessionRunner:
         session_gone = False
         last_msg_count = 0
         stable_since: float | None = None
-        STABLE_WINDOW = 3.0
+        STABLE_WINDOW = 10.0
         while True:
             error = self.tap.pop_error(session_id)
             if error is not None:
