@@ -157,37 +157,28 @@ class SessionRunner:
             self.abort_session(handle)
             raise
         deadline = started + timeout
+        session_gone = False
         while True:
             error = self.tap.pop_error(session_id)
             if error is not None:
                 self.abort_session(handle)
                 msg = f"{error.get('name', 'UnknownError')}: {error.get('message', '')}"
                 raise RuntimeError(msg) from None
-            if not self.client.session_alive(session_id):
-                for _attempt in range(10):
-                    messages = self.client.messages(session_id, directory)
-                    if len(messages) > baseline:
-                        text = self._assistant_text(messages)
-                        if text:
-                            elapsed = time.monotonic() - started
-                            log.info(
-                                "session %s completed in %.1fs (%d chars)",
-                                session_id,
-                                elapsed,
-                                len(text),
-                            )
-                            return RunResult(text=text, session_id=session_id)
-                    time.sleep(0.25)
+            if not session_gone and not self.client.session_alive(session_id):
+                session_gone = True
+            if session_gone:
                 messages = self.client.messages(session_id, directory)
-                text = self._assistant_text(messages)
-                elapsed = time.monotonic() - started
-                log.info(
-                    "session %s completed in %.1fs (%d chars)",
-                    session_id,
-                    elapsed,
-                    len(text),
-                )
-                return RunResult(text=text, session_id=session_id)
+                if len(messages) > baseline:
+                    text = self._assistant_text(messages)
+                    if text:
+                        elapsed = time.monotonic() - started
+                        log.info(
+                            "session %s completed in %.1fs (%d chars)",
+                            session_id,
+                            elapsed,
+                            len(text),
+                        )
+                        return RunResult(text=text, session_id=session_id)
             if time.monotonic() >= deadline:
                 self.abort_session(handle)
                 raise TimeoutError(f"session {session_id} exceeded {timeout}s") from None
