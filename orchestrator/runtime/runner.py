@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from orchestrator.logs import get
 from orchestrator.runtime.client import OpencodeApiError, OpencodeClient, SessionHandle
@@ -191,7 +192,7 @@ class SessionRunner:
             return 0
 
     @staticmethod
-    def _assistant_text(messages: list[dict]) -> str:
+    def _assistant_text(messages: list[dict[str, Any]]) -> str:
         chunks: list[str] = []
         for message in messages:
             info = message.get("info") or {}
