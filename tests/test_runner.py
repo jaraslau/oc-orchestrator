@@ -63,7 +63,6 @@ class FakeClient:
 class StubTap:
     def __init__(self):
         self.errors: dict[str, dict] = {}
-        self.activity: list = []
 
     def pop_error(self, session_id):
         return self.errors.pop(session_id, None)
@@ -110,7 +109,6 @@ class TestRun:
         result = make_runner(client).run("do it", Path("/tmp/wt"))
         assert "STATUS: DONE" in result.text
         assert result.models_tried == ["opencode/big-pickle"]
-        assert result.failed_over is False
 
     def test_agent_and_variant_forwarded(self):
         client = FakeClient()
@@ -146,7 +144,6 @@ class TestRun:
 
         client.prompt_async = flaky_prompt
         result = runner.run("goal", Path("/wt"))
-        assert result.failed_over is True
         assert result.models_tried[-1] == "opencode/backup-model"
         assert "ses_0" in client.aborted
 
@@ -205,22 +202,8 @@ class TestEventTapHandling:
         assert tap.pop_error("s1") == {"name": "APIError", "message": "502"}
         assert tap.pop_error("s1") is None
 
-    def test_part_updates_recorded(self):
-        tap = EventTap(client=None)
-        tap._handle(
-            {
-                "type": "message.part.updated",
-                "properties": {
-                    "sessionID": "s2",
-                    "part": {"type": "tool", "tool": "bash", "state": {"status": "running"}},
-                },
-            }
-        )
-        assert ("s2", "tool") in tap.activity
-
     def test_other_events_ignored_safely(self):
         tap = EventTap(client=None)
         tap._handle({"type": "storage.write", "properties": {}})
         tap._handle({})
-        assert len(tap.activity) == 0
         assert not tap.errors

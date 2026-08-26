@@ -19,7 +19,6 @@ class Config:
     branch_prefix: str = "agent/"
     worktree_dirname: str = "worktrees"
     logs_dirname: str = "logs"
-    manager_agent: str = "orchestrator-manager"
     worker_agent: str = "orchestrator-worker"
     worker_model: str | None = None
     planner_model: str | None = None

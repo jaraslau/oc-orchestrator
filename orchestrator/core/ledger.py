@@ -21,7 +21,6 @@ class TaskStatus(StrEnum):
     PR_OPEN = "PR_OPEN"
     REVIEWING = "REVIEWING"
     CHANGES_REQUESTED = "CHANGES_REQUESTED"
-    READY_TO_MERGE = "READY_TO_MERGE"
     MERGED = "MERGED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
@@ -47,7 +46,6 @@ class Task:
     role: str | None = None
     model: str | None = None
     effort: str | None = None
-    risks: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
 
@@ -102,7 +100,6 @@ class Ledger:
         branch: str | None = None,
         model: str | None = None,
         effort: str | None = None,
-        risks: list[str] | None = None,
     ) -> Task:
         deps = dependencies or []
         unknown = [d for d in deps if d not in self.tasks]
@@ -118,7 +115,6 @@ class Ledger:
             branch=branch,
             model=model,
             effort=effort,
-            risks=risks or [],
         )
         self.tasks[task.id] = task
         return task

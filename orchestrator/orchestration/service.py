@@ -98,7 +98,6 @@ def create_task(
     objective: str = "",
     acceptance_criteria: list[str] | None = None,
     dependencies: list[str] | None = None,
-    risks: list[str] | None = None,
     role: str | None = None,
     model: str | None = None,
     effort: str | None = None,
@@ -110,7 +109,6 @@ def create_task(
         objective=objective,
         acceptance_criteria=acceptance_criteria,
         dependencies=dependencies,
-        risks=risks,
         model=model,
         effort=effort,
     )
@@ -309,7 +307,7 @@ def _record_dict(record: DispatchRecord | None) -> dict | None:
 # Review & integration (GitHub via gh)
 # ---------------------------------------------------------------------------
 
-_PR_ELIGIBLE = {TaskStatus.REVIEWING, TaskStatus.READY_TO_MERGE, TaskStatus.CHANGES_REQUESTED}
+_PR_ELIGIBLE = {TaskStatus.REVIEWING, TaskStatus.CHANGES_REQUESTED}
 
 
 def _client(root: Path, config: Config, gh_runner=None) -> GhClient:

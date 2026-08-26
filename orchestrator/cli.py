@@ -27,15 +27,6 @@ ROLES_PACKAGE = "orchestrator.agents.roles"
 ROOT_ENV_VAR = "OC_ORCHESTRATOR_ROOT"
 
 
-def _mcp_server_entry(root: Path) -> dict:
-    del root  # entry must stay machine-independent; serve falls back to cwd
-    return {
-        "type": "local",
-        "command": ["oc-orchestrator", "serve"],
-        "enabled": True,
-    }
-
-
 def _load_agent_definition(filename: str) -> str:
     return resources.files(AGENTS_PACKAGE).joinpath(filename).read_text(encoding="utf-8")
 
@@ -217,7 +208,11 @@ def _merge_opencode_config(root: Path) -> bool:
         data = {"$schema": "https://opencode.ai/config.json"}
 
     servers = data.setdefault("mcp", {})
-    servers[MCP_SERVER_NAME] = _mcp_server_entry(root)
+    servers[MCP_SERVER_NAME] = {
+        "type": "local",
+        "command": ["oc-orchestrator", "serve"],
+        "enabled": True,
+    }
     write_json_atomic(cfg_path, data)
     return True
 

@@ -22,6 +22,7 @@ from orchestrator.orchestration.service import (
     shutdown_runtime,
     task_status,
 )
+from orchestrator.runtime.worktrees import worktree_path
 
 Io = Callable[[str], None]
 GateRunner = Callable[[Path, Config], tuple[bool, str]]
@@ -314,7 +315,7 @@ def run_goal(
 
                 if status == "REVIEWING":
                     progressed = True
-                    worktree = _worktree_path(root, config, t["branch"])
+                    worktree = worktree_path(root, config, t["branch"])
                     if not worktree.exists():
                         io(f"[{loop}] warning: {tid} REVIEWING but worktree missing")
                         continue
@@ -365,12 +366,6 @@ def run_goal(
         shutdown_runtime(root)
 
 
-def _worktree_path(root: Path, config: Config, branch: str) -> Path:
-    from orchestrator.runtime.worktrees import worktree_path
-
-    return worktree_path(root, config, branch)
-
-
 def _is_terminal(root: Path, tid: str) -> bool:
     return task_status(root, tid)["task"]["status"] in TERMINAL_OK | TERMINAL_GIVE_UP
 
@@ -398,16 +393,3 @@ def _finalize_merge(root: Path, config: Config, tid: str, t: dict, io: Io) -> No
     lg.save()
     cleanup_worktree(root, tid)
     io(f"merged {tid} ({t['title']})")
-
-
-__all__ = [
-    "PlanningError",
-    "PlannedTask",
-    "create_planned_tasks",
-    "default_gate",
-    "extract_json_block",
-    "llm_review",
-    "parse_plan",
-    "plan_tasks",
-    "run_goal",
-]

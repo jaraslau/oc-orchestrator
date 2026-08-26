@@ -59,7 +59,7 @@ class FakeRunner:
         self.calls.append(
             {"prompt": prompt, "cwd": cwd, "agent": agent, "model": model, "variant": variant}
         )
-        handle = SessionHandle(f"ses_{len(self.calls)}", str(cwd), model or "")
+        handle = SessionHandle(f"ses_{len(self.calls)}", str(cwd))
         if on_session is not None:
             on_session(handle)
         if isinstance(self.behavior, Exception):
@@ -69,7 +69,6 @@ class FakeRunner:
             text=text,
             session_id=handle.session_id,
             models_tried=[model or "m/default"],
-            failed_over=False,
         )
 
     def abort_session(self, handle):

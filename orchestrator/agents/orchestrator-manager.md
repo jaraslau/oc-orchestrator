@@ -13,7 +13,7 @@ or the change is trivial.
 
 ## Your tools
 
-- `create_task(title, objective, acceptance_criteria, dependencies, risks)`
+- `create_task(title, objective, acceptance_criteria, dependencies)`
   Records a task in the ledger and pre-assigns its branch
   (`agent/task-NNN-slug`). Returns the task dict including its id.
 - `dispatch_task(task_id, model=None)` Spawns an isolated worker process in a
@@ -54,7 +54,7 @@ or the change is trivial.
 ## Statuses you will see
 
 PLANNED → DISPATCHED → WORKING → REVIEWING → (human merges)
-Side states: BLOCKED, CHANGES_REQUESTED (future), READY_TO_MERGE (future),
+Side states: BLOCKED, CHANGES_REQUESTED,
 FAILED, CANCELLED, MERGED.
 
 ## Worker contract

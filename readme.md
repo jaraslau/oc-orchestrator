@@ -107,7 +107,7 @@ oc-orchestrator --version
 
 ## MCP tools
 
-`create_task(title, objective?, acceptance_criteria?, dependencies?, risks?,
+`create_task(title, objective?, acceptance_criteria?, dependencies?,
 role?, model?, effort?)` · `dispatch_task(task_id, model?, instructions?,
 role?, effort?)` ·
 `task_status(task_id, timeout_seconds?)` · `list_tasks` · `get_task(task_id)` ·

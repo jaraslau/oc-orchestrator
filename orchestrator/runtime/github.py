@@ -116,6 +116,3 @@ def _json_array(text: str) -> list:
     if not isinstance(value, list):
         raise GhError(f"unexpected gh output: expected JSON array, got: {text[:120]}")
     return value
-
-
-__all__ = ["GhClient", "GhError", "PrInfo", "pr_number_from_url"]

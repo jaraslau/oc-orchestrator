@@ -19,10 +19,8 @@ from orchestrator.runtime.client import OpencodeApiError, OpencodeClient, Sessio
 from orchestrator.runtime.events import EventTap
 from orchestrator.runtime.resilience import (
     PROVIDER_SIDED,
-    ErrorKind,
     ModelChain,
     OrchestratorError,
-    ProviderExhaustedError,
     classify,
     parse_model_ref,
 )
@@ -37,7 +35,6 @@ class RunResult:
     text: str
     session_id: str
     models_tried: list[str] = field(default_factory=list)
-    failed_over: bool = False
 
 
 class SessionRunner:
@@ -107,7 +104,6 @@ class SessionRunner:
                     on_session=on_session,
                 )
                 result.models_tried = [m for m, _ in attempts] + [current]
-                result.failed_over = bool(attempts)
                 if attempts:
                     log.info(
                         "succeeded on failover model %s after %d failure(s)", current, len(attempts)
@@ -119,7 +115,6 @@ class SessionRunner:
                 log.error("model %s failed (%s): %s", current, kind.value, exc)
                 if kind not in PROVIDER_SIDED or chain.advance(kind.value) is None:
                     raise
-        raise ProviderExhaustedError(attempts)
 
     def abort_session(self, handle: SessionHandle) -> None:
         try:
@@ -140,7 +135,7 @@ class SessionRunner:
     ) -> RunResult:
         directory = str(cwd)
         session_id = self.client.create_session(directory, title=prompt[:60].replace("\n", " "))
-        handle = SessionHandle(session_id, directory, model)
+        handle = SessionHandle(session_id, directory)
         if on_session is not None:
             on_session(handle)
         log.info(
@@ -213,10 +208,3 @@ class SessionRunner:
                 if part.get("type") == "text":
                     chunks.append(part.get("text", ""))
         return "\n".join(chunks).strip()
-
-
-def classify_kind(text: str) -> ErrorKind:
-    return classify(text)
-
-
-__all__ = ["RunResult", "SessionRunner"]

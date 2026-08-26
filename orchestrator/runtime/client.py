@@ -26,7 +26,6 @@ class OpencodeApiError(RuntimeError):
 class SessionHandle:
     session_id: str
     directory: str
-    model: str
 
 
 class OpencodeClient:
@@ -51,13 +50,6 @@ class OpencodeClient:
             return response.json()
         except ValueError:
             return None
-
-    def health(self) -> bool:
-        try:
-            self._request("GET", "/global/health")
-            return True
-        except OpencodeApiError:
-            return False
 
     def providers(self) -> dict[str, list[str]]:
         data = self._request("GET", "/config/providers") or {}

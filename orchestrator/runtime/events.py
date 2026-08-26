@@ -7,7 +7,6 @@ logs activity so `--verbose` shows what every worker is doing live.
 from __future__ import annotations
 
 import threading
-from collections import deque
 from typing import Any
 
 import httpx
@@ -17,14 +16,11 @@ from orchestrator.runtime.client import OpencodeApiError, OpencodeClient
 
 log = get("events")
 
-_ACTIVITY_LIMIT = 200
-
 
 class EventTap:
     def __init__(self, client: OpencodeClient) -> None:
         self.client = client
         self.errors: dict[str, dict[str, Any]] = {}
-        self.activity: deque[tuple[str, str]] = deque(maxlen=_ACTIVITY_LIMIT)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -43,9 +39,6 @@ class EventTap:
 
     def pop_error(self, session_id: str) -> dict[str, Any] | None:
         return self.errors.pop(session_id, None)
-
-    def _record(self, session_id: str, kind: str) -> None:
-        self.activity.append((session_id, kind))
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -79,7 +72,6 @@ class EventTap:
         if etype == "message.part.updated":
             part = props.get("part") or {}
             ptype = part.get("type", "?")
-            self._record(sid, ptype)
             if ptype == "tool":
                 tool = part.get("tool", "?")
                 state = (part.get("state") or {}).get("status", "")
@@ -90,7 +82,6 @@ class EventTap:
                 log.log(5, "[%s] part %s", sid[-8:], ptype)
             return
         if etype == "session.idle":
-            self._record(sid, "idle")
             log.debug("session %s idle", sid)
             return
         log.log(5, "event %s", etype)

@@ -5,10 +5,8 @@ from orchestrator.runtime.resilience import (
     ErrorKind,
     ModelChain,
     OrchestratorError,
-    ProviderExhaustedError,
     classify,
     parse_model_ref,
-    run_with_failover,
 )
 
 
@@ -60,71 +58,6 @@ class TestModelChain:
         assert chain.advance("quota") == "c"
         assert chain.advance("rate") is None
         assert chain.exhausted
-
-
-class TestRunWithFailover:
-    def test_success_on_first_model(self):
-        chain = ModelChain.build("a", ["b"], "c")
-        calls = []
-
-        def attempt(model):
-            calls.append(model)
-            return f"ok-{model}"
-
-        assert run_with_failover(chain, attempt) == "ok-a"
-        assert calls == ["a"]
-
-    def test_failover_to_backup(self):
-        chain = ModelChain.build("a", ["b"], "c")
-
-        def attempt(model):
-            if model == "a":
-                raise RuntimeError("429 rate limit exceeded")
-            return "ok"
-
-        assert run_with_failover(chain, attempt) == "ok"
-
-    def test_non_provider_error_raises_immediately(self):
-        chain = ModelChain.build("a", ["b"], "c")
-        calls = []
-
-        def attempt(model):
-            calls.append(model)
-            raise ValueError("bug in our code")
-
-        with pytest.raises(ValueError):
-            run_with_failover(chain, attempt)
-        assert calls == ["a"]
-
-    def test_exhaustion_raises_with_diagnosis(self):
-        chain = ModelChain.build("a", ["b"], "c")
-
-        def attempt(model):
-            if model == "a":
-                raise RuntimeError("401 unauthorized")
-            raise RuntimeError("502 bad gateway")
-
-        with pytest.raises(ProviderExhaustedError) as excinfo:
-            run_with_failover(chain, attempt)
-        models = [m for m, _ in excinfo.value.attempts]
-        assert models == ["a", "b"]
-        assert "[provider_auth]" in excinfo.value.attempts[0][1]
-        assert "[provider_unavailable]" in excinfo.value.attempts[1][1]
-
-    def test_custom_classifier(self):
-        class Weird(Exception):
-            pass
-
-        chain = ModelChain.build("a", ["b"], "c")
-
-        def classifier(err):
-            return ErrorKind.PROVIDER_UNAVAILABLE
-
-        def attempt(model):
-            raise Weird()
-
-        with pytest.raises(ProviderExhaustedError):
-            run_with_failover(chain, attempt, classifier)
 
 
 PROVIDERS = {"anthropic": ["claude-sonnet-4-6", "claude-haiku-4"], "opencode": ["big-pickle"]}

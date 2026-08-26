@@ -8,10 +8,8 @@ model in the chain; everything else fails fast with full context.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypeVar
 
 from orchestrator.logs import get
 
@@ -88,13 +86,6 @@ class OrchestratorError(RuntimeError):
     pass
 
 
-class ProviderExhaustedError(OrchestratorError):
-    def __init__(self, attempts: list[tuple[str, str]]) -> None:
-        self.attempts = attempts
-        detail = "; ".join(f"{m}: {e}" for m, e in attempts)
-        super().__init__(f"all models failed -> {detail}")
-
-
 @dataclass
 class ModelChain:
     models: list[str]
@@ -126,40 +117,6 @@ class ModelChain:
         nxt = self.current
         log.info("switching model: %s -> %s", failed, nxt)
         return nxt
-
-
-T = TypeVar("T")
-
-
-@dataclass
-class AttemptOutcome:
-    value: T | None = None
-    error: Exception | None = None
-
-
-def run_with_failover[T](
-    chain: ModelChain,
-    attempt: Callable[[str], T],
-    classify_error: Callable[[Exception], ErrorKind] | None = None,
-) -> T:
-    classifier = classify_error or (lambda err: classify(str(err)))
-    attempts: list[tuple[str, str]] = []
-    while not chain.exhausted:
-        model = chain.current
-        try:
-            result = attempt(model)
-            if attempts:
-                log.info("succeeded on failover model %s after %d failure(s)", model, len(attempts))
-            return result
-        except Exception as exc:
-            kind = classifier(exc)
-            attempts.append((model, f"[{kind.value}] {exc}"))
-            log.error("attempt on %s raised %s: %s", model, kind.value, exc)
-            if kind not in PROVIDER_SIDED:
-                raise
-            if chain.advance(kind.value) is None:
-                break
-    raise ProviderExhaustedError(attempts)
 
 
 def parse_model_ref(

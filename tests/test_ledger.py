@@ -43,7 +43,6 @@ class TestPersistence:
             acceptance_criteria=["tests pass"],
             agent="agent-a",
             branch="agent/task-001-thing",
-            risks=["none known"],
         )
         ledger.update_status(created.id, TaskStatus.DISPATCHED)
         ledger.save()
