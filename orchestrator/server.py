@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from orchestrator.core import errors
 from orchestrator.orchestration import service as _service
@@ -13,7 +13,18 @@ from orchestrator.orchestration import service as _service
 DEFAULT_SERVER_NAME = "oc-orchestrator"
 
 
-def build_server(mcp_cls: Callable[[str], Any], root: Path | None = None) -> Any:
+class _McpInstance(Protocol):
+    def tool(
+        self, *args: Any, **kwargs: Any
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]: ...
+
+    def run(self) -> None: ...
+
+
+McpFactory = Callable[[str], _McpInstance]
+
+
+def build_server(mcp_cls: McpFactory, root: Path | None = None) -> _McpInstance:
     base = root if root is not None else Path.cwd()
 
     mcp = mcp_cls(DEFAULT_SERVER_NAME)
@@ -27,7 +38,7 @@ def build_server(mcp_cls: Callable[[str], Any], root: Path | None = None) -> Any
         role: str | None = None,
         model: str | None = None,
         effort: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Create a task in the ledger with an assigned branch name. role assigns
         the worker persona used at dispatch time (e.g. orchestrator-tester).
         model pins the LLM for this task's workers; effort sets reasoning effort
@@ -50,7 +61,7 @@ def build_server(mcp_cls: Callable[[str], Any], root: Path | None = None) -> Any
         instructions: str | None = None,
         role: str | None = None,
         effort: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Dispatch a worker agent for a task (non-blocking). Use instructions to
         pass correction details when re-dispatching after changes were requested.
         role overrides the worker persona for this dispatch (e.g. orchestrator-reviewer).
@@ -60,37 +71,37 @@ def build_server(mcp_cls: Callable[[str], Any], root: Path | None = None) -> Any
         )
 
     @mcp.tool()
-    def task_status(task_id: str, timeout_seconds: float = 0.0) -> dict:
+    def task_status(task_id: str, timeout_seconds: float = 0.0) -> dict[str, Any]:
         """Get current task state; optionally wait up to timeout_seconds for worker completion."""
         return _service.task_status(base, task_id, timeout=timeout_seconds)
 
     @mcp.tool()
-    def list_tasks(status: str | None = None) -> list[dict]:
+    def list_tasks(status: str | None = None) -> list[dict[str, Any]]:
         """List tasks in the ledger, optionally filtered by status."""
         return _service.list_tasks(base, status=status)
 
     @mcp.tool()
-    def get_task(task_id: str) -> dict:
+    def get_task(task_id: str) -> dict[str, Any]:
         """Fetch full details of a single task including parsed handoff."""
         return _service.get_task(base, task_id)
 
     @mcp.tool()
-    def cancel_task(task_id: str) -> dict:
+    def cancel_task(task_id: str) -> dict[str, Any]:
         """Cancel a task and terminate its worker process if running."""
         return _service.cancel_task(base, task_id)
 
     @mcp.tool()
-    def open_pr(task_id: str, title: str | None = None, body: str | None = None) -> dict:
+    def open_pr(task_id: str, title: str | None = None, body: str | None = None) -> dict[str, Any]:
         """Open (or reuse) a GitHub pull request for a REVIEWING task."""
         return _service.open_pr(base, task_id, title=title, body=body)
 
     @mcp.tool()
-    def request_changes(task_id: str, comment: str) -> dict:
+    def request_changes(task_id: str, comment: str) -> dict[str, Any]:
         """Request corrections on a task's PR; re-dispatch with instructions afterwards."""
         return _service.request_changes(base, task_id, comment)
 
     @mcp.tool()
-    def merge_task(task_id: str) -> dict:
+    def merge_task(task_id: str) -> dict[str, Any]:
         """Merge a task's PR (dependency-aware) and clean up its worktree."""
         return _service.merge_task(base, task_id)
 
@@ -100,7 +111,7 @@ def build_server(mcp_cls: Callable[[str], Any], root: Path | None = None) -> Any
         return _service.pr_diff(base, task_id)
 
     @mcp.tool()
-    def list_open_prs() -> list[dict]:
+    def list_open_prs() -> list[dict[str, Any]]:
         """List open pull requests in this repository."""
         return _service.list_open_prs(base)
 
@@ -113,7 +124,7 @@ def build_server(mcp_cls: Callable[[str], Any], root: Path | None = None) -> Any
 
 
 def run_serve(
-    load_server: Callable[[str], Any] | None = None,
+    load_server: McpFactory | None = None,
     root: Path | None = None,
 ) -> int:
     """Start the stdio MCP server. Returns 0 on clean shutdown, 1 on setup failure."""
