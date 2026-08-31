@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 import json
 import subprocess
 import threading
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,21 +24,21 @@ from tests.conftest import HANDOFF_OK, configured
 
 
 class TestExtractJson:
-    def test_fenced_block(self):
-        text = 'blah\n```json\n{"tasks": []}\n```\nend'
+    def test_fenced_block(self) -> None:
+        text: str = 'blah\n```json\n{"tasks": []}\n```\nend'
         assert extract_json_block(text) == {"tasks": []}
 
-    def test_bare_object(self):
+    def test_bare_object(self) -> None:
         assert extract_json_block('noise {"a": {"b": 1}} noise') == {"a": {"b": 1}}
 
-    def test_no_json_raises(self):
+    def test_no_json_raises(self) -> None:
         with pytest.raises(PlanningError):
             extract_json_block("no objects here")
 
 
 class TestParsePlan:
-    def test_valid_plan(self):
-        plans = parse_plan(
+    def test_valid_plan(self) -> None:
+        plans: list[PlannedTask] = parse_plan(
             json.dumps(
                 {
                     "tasks": [
@@ -59,11 +64,11 @@ class TestParsePlan:
         assert plans[1].model == "g"
         assert plans[1].effort == "high"
 
-    def test_effort_omitted_is_none(self):
-        plans = parse_plan(json.dumps({"tasks": [{"title": "C"}]}))
+    def test_effort_omitted_is_none(self) -> None:
+        plans: list[PlannedTask] = parse_plan(json.dumps({"tasks": [{"title": "C"}]}))
         assert plans[0].effort is None
 
-    def test_empty_or_titleless_rejected(self):
+    def test_empty_or_titleless_rejected(self) -> None:
         with pytest.raises(PlanningError):
             parse_plan(json.dumps({"tasks": []}))
         with pytest.raises(PlanningError):
@@ -73,14 +78,17 @@ class TestParsePlan:
         "task",
         [None, {"title": "x", "depends_on": "not-a-list"}],
     )
-    def test_malformed_task_rejected(self, task):
+    def test_malformed_task_rejected(self, task: Any) -> None:
         with pytest.raises(PlanningError):
             parse_plan(json.dumps({"tasks": [task]}))
 
 
-def test_invalid_review_verdict_fails_closed(tmp_path, monkeypatch):
-    monkeypatch.setattr("orchestrator.orchestration.supervisor.call_llm", lambda *a, **kw: "junk")
-    task = {
+def test_invalid_review_verdict_fails_closed(tmp_path: Path, monkeypatch: Any) -> None:
+    def _junk_llm(*args: Any, **kwargs: Any) -> str:
+        return "junk"
+
+    monkeypatch.setattr("orchestrator.orchestration.supervisor.call_llm", _junk_llm)
+    task: dict[str, Any] = {
         "title": "x",
         "objective": "",
         "acceptance_criteria": [],
@@ -92,28 +100,33 @@ def test_invalid_review_verdict_fails_closed(tmp_path, monkeypatch):
 
 
 class TestPlanRetry:
-    def test_retries_once_with_feedback(self, monkeypatch):
-        calls = []
+    def test_retries_once_with_feedback(self, monkeypatch: Any) -> None:
+        calls: list[str] = []
 
-        def flaky(root, prompt, *, model=None):
+        def flaky(root: Path, prompt: str, *, model: str | None = None) -> str:
             calls.append(prompt)
             if len(calls) == 1:
                 return "total garbage"
             return '```json\n{"tasks": [{"title": "ok"}]}\n```'
 
         monkeypatch.setattr("orchestrator.orchestration.supervisor.call_llm", flaky)
-        plans = plan_tasks("/tmp/x", Config(), "goal")
+        plans: list[PlannedTask] = plan_tasks(Path("/tmp/x"), Config(), "goal")
         assert [p.title for p in plans] == ["ok"]
         assert len(calls) == 2
         assert "not valid plan JSON" in calls[1]
 
-    def test_falls_back_to_one_worker_when_planner_is_unavailable(self, monkeypatch):
+    def test_falls_back_to_one_worker_when_planner_is_unavailable(self, monkeypatch: Any) -> None:
+        def failing_llm(*args: Any, **kwargs: Any) -> str:
+            raise RuntimeError("offline")
+
         monkeypatch.setattr(
             "orchestrator.orchestration.supervisor.call_llm",
-            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+            failing_llm,
         )
 
-        plans = plan_tasks("/tmp/x", Config(worker_model="provider/worker"), "ship feature")
+        plans: list[PlannedTask] = plan_tasks(
+            Path("/tmp/x"), Config(worker_model="provider/worker"), "ship feature"
+        )
 
         assert plans == [
             PlannedTask(
@@ -127,23 +140,26 @@ class TestPlanRetry:
 
 
 @pytest.fixture()
-def fast_factory(repo):
+def fast_factory(repo: Path) -> Path:
     """Repo wired for run_goal with instant fake workers."""
     configured(repo)
     return repo
 
 
-def _approve_all():
-    return lambda task, diff, gate_ok, gate_out: ("approve", "")
+def _approve_all() -> Callable[[dict[str, Any], str, bool, str], tuple[str, str]]:
+    def _reviewer(task: dict[str, Any], diff: str, gate_ok: bool, gate_out: str) -> tuple[str, str]:
+        return ("approve", "")
+
+    return _reviewer
 
 
 class TestRunGoal:
-    def test_happy_path_two_independent_tasks(self, fast_factory):
-        plans = [
+    def test_happy_path_two_independent_tasks(self, fast_factory: Path) -> None:
+        plans: list[PlannedTask] = [
             PlannedTask(title="Add foo", objective="implement foo"),
             PlannedTask(title="Add bar", acceptance_criteria=["bar works"]),
         ]
-        rc = run_goal(
+        rc: int = run_goal(
             fast_factory,
             "do foo and bar",
             max_loops=20,
@@ -154,17 +170,23 @@ class TestRunGoal:
             io=print,
         )
         assert rc == 0
-        lg = Ledger.load(ledger_path(fast_factory))
+        lg: Ledger = Ledger.load(ledger_path(fast_factory))
         assert all(t.status == TaskStatus.MERGED for t in lg.tasks.values())
-        wt_root = fast_factory / ".orchestrator" / "worktrees"
-        leftovers = [p for p in wt_root.rglob("*") if p.is_dir() and "task-" in p.name]
+        wt_root: Path = fast_factory / ".orchestrator" / "worktrees"
+        leftovers: list[Path] = [p for p in wt_root.rglob("*") if p.is_dir() and "task-" in p.name]
         assert not leftovers
 
-    def test_changes_then_approve_correction_cycle(self, fast_factory):
-        plans = [PlannedTask(title="Reworked feature")]
-        verdicts = iter([("changes", "handle empty input"), ("approve", "")])
-        seen = []
-        rc = run_goal(
+    def test_changes_then_approve_correction_cycle(self, fast_factory: Path) -> None:
+        plans: list[PlannedTask] = [PlannedTask(title="Reworked feature")]
+        verdicts: Any = iter([("changes", "handle empty input"), ("approve", "")])
+        seen: list[int] = []
+
+        def reviewer(t: dict[str, Any], d: str, ok: bool, go: str) -> tuple[str, str]:
+            seen.append(1)
+            result: Any = next(verdicts)
+            return result  # type: ignore[no-any-return]
+
+        rc: int = run_goal(
             fast_factory,
             "goal",
             max_loops=25,
@@ -172,17 +194,17 @@ class TestRunGoal:
             poll_seconds=0.05,
             planner=lambda root, config, goal: plans,
             gate_runner=lambda wt, cfg: (True, ""),
-            reviewer=lambda t, d, ok, go: (seen.append(1), next(verdicts))[1],
+            reviewer=reviewer,
             io=lambda s: None,
         )
         assert rc == 0
         assert len(seen) == 2
-        lg = Ledger.load(ledger_path(fast_factory))
+        lg: Ledger = Ledger.load(ledger_path(fast_factory))
         assert all(t.status == TaskStatus.MERGED for t in lg.tasks.values())
 
-    def test_correction_budget_exhaustion_gives_up(self, fast_factory):
-        plans = [PlannedTask(title="Never good enough")]
-        rc = run_goal(
+    def test_correction_budget_exhaustion_gives_up(self, fast_factory: Path) -> None:
+        plans: list[PlannedTask] = [PlannedTask(title="Never good enough")]
+        rc: int = run_goal(
             fast_factory,
             "impossible",
             max_loops=25,
@@ -194,17 +216,19 @@ class TestRunGoal:
             io=lambda s: None,
         )
         assert rc == 1
-        lg = Ledger.load(ledger_path(fast_factory))
+        lg: Ledger = Ledger.load(ledger_path(fast_factory))
         (t,) = lg.tasks.values()
         assert t.status == TaskStatus.BLOCKED
         assert "supervisor gave up" in (t.last_result or "")
 
-    def test_merge_failure_is_not_counted_as_success(self, fast_factory, monkeypatch):
-        def fail_merge(*args, **kwargs):
+    def test_merge_failure_is_not_counted_as_success(  # noqa: E501
+        self, fast_factory: Path, monkeypatch: Any
+    ) -> None:
+        def fail_merge(*args: Any, **kwargs: Any) -> None:
             raise subprocess.CalledProcessError(1, "git merge", stderr="conflict")
 
         monkeypatch.setattr("orchestrator.orchestration.supervisor._merge_branch", fail_merge)
-        rc = run_goal(
+        rc: int = run_goal(
             fast_factory,
             "conflicting change",
             max_loops=10,
@@ -219,8 +243,8 @@ class TestRunGoal:
         task = next(iter(Ledger.load(ledger_path(fast_factory)).tasks.values()))
         assert task.status == TaskStatus.BLOCKED
 
-    def test_dry_run_creates_nothing(self, repo):
-        rc = run_goal(
+    def test_dry_run_creates_nothing(self, repo: Path) -> None:
+        rc: int = run_goal(
             repo,
             "just looking",
             dry_run=True,
@@ -230,11 +254,13 @@ class TestRunGoal:
         assert rc == 0
         assert not (repo / ".orchestrator").exists()
 
-    def test_planned_model_flows_to_dispatch_command(self, fast_factory):
+    def test_planned_model_flows_to_dispatch_command(self, fast_factory: Path) -> None:
         from orchestrator.orchestration import service
 
         runner = service.get_dispatcher(fast_factory)._runner
-        plans = [PlannedTask(title="Heavy lift", model="anthropic/opus", effort="high")]
+        plans: list[PlannedTask] = [
+            PlannedTask(title="Heavy lift", model="anthropic/opus", effort="high")
+        ]
         run_goal(
             fast_factory,
             "goal",
@@ -248,8 +274,8 @@ class TestRunGoal:
         assert runner.calls[0]["model"] == "anthropic/opus"
         assert runner.calls[0]["variant"] == "high"
 
-    def test_planned_effort_persists_on_task(self, fast_factory):
-        plans = [PlannedTask(title="Tricky bug", effort="high")]
+    def test_planned_effort_persists_on_task(self, fast_factory: Path) -> None:
+        plans: list[PlannedTask] = [PlannedTask(title="Tricky bug", effort="high")]
         run_goal(
             fast_factory,
             "fix it",
@@ -260,16 +286,16 @@ class TestRunGoal:
             reviewer=_approve_all(),
             io=lambda s: None,
         )
-        lg = Ledger.load(ledger_path(fast_factory))
+        lg: Ledger = Ledger.load(ledger_path(fast_factory))
         (t,) = lg.tasks.values()
         assert t.effort == "high"
 
-    def test_dependencies_created_in_order(self, fast_factory):
-        plans = [
+    def test_dependencies_created_in_order(self, fast_factory: Path) -> None:
+        plans: list[PlannedTask] = [
             PlannedTask(title="First", objective="base"),
             PlannedTask(title="Second", depends_on=["First"]),
         ]
-        rc = run_goal(
+        rc: int = run_goal(
             fast_factory,
             "chained",
             max_loops=20,
@@ -280,19 +306,19 @@ class TestRunGoal:
             io=lambda s: None,
         )
         assert rc == 0
-        lg = Ledger.load(ledger_path(fast_factory))
-        by_id = {t.id: t for t in lg.tasks.values()}
+        lg: Ledger = Ledger.load(ledger_path(fast_factory))
+        by_id: dict[str, Any] = {t.id: t for t in lg.tasks.values()}
         child = next(t for t in lg.tasks.values() if t.title == "Second")
         assert by_id[child.dependencies[0]].title == "First"
 
-    def test_reviewer_failure_retries_then_fails_closed(self, fast_factory):
-        calls = []
+    def test_reviewer_failure_retries_then_fails_closed(self, fast_factory: Path) -> None:
+        calls: list[int] = []
 
-        def broken_reviewer(*args):
+        def broken_reviewer(*args: Any) -> tuple[str, str]:
             calls.append(1)
             raise RuntimeError("review service offline")
 
-        rc = run_goal(
+        rc: int = run_goal(
             fast_factory,
             "goal",
             max_loops=10,
@@ -310,8 +336,8 @@ class TestRunGoal:
         assert task.status == TaskStatus.BLOCKED
         assert "review failed" in (task.last_result or "")
 
-    def test_failed_gate_cannot_be_overridden_by_reviewer(self, fast_factory):
-        rc = run_goal(
+    def test_failed_gate_cannot_be_overridden_by_reviewer(self, fast_factory: Path) -> None:
+        rc: int = run_goal(
             fast_factory,
             "goal",
             max_loops=10,
@@ -327,14 +353,14 @@ class TestRunGoal:
         task = next(iter(Ledger.load(ledger_path(fast_factory)).tasks.values()))
         assert task.status == TaskStatus.BLOCKED
 
-    def test_loop_exhaustion_cancels_and_marks_worker_blocked(self, fast_factory):
-        hold = threading.Event()
+    def test_loop_exhaustion_cancels_and_marks_worker_blocked(self, fast_factory: Path) -> None:
+        hold: threading.Event = threading.Event()
         runner = configured(
             fast_factory,
             lambda prompt, cwd: (hold.wait(timeout=2), HANDOFF_OK)[1],
         )
 
-        rc = run_goal(
+        rc: int = run_goal(
             fast_factory,
             "goal",
             max_loops=1,
@@ -351,11 +377,12 @@ class TestRunGoal:
         assert task.status == TaskStatus.BLOCKED
         assert "loop budget exhausted" in (task.last_result or "")
 
-    def test_worker_limit_also_applies_to_correction_dispatches(self, fast_factory):
-        lock = threading.Lock()
-        active = peak = 0
+    def test_worker_limit_also_applies_to_correction_dispatches(self, fast_factory: Path) -> None:
+        lock: threading.Lock = threading.Lock()
+        active: int = 0
+        peak: int = 0
 
-        def tracked_worker(prompt, cwd):
+        def tracked_worker(prompt: str, cwd: Path) -> str:
             nonlocal active, peak
             with lock:
                 active += 1
@@ -370,13 +397,15 @@ class TestRunGoal:
         configured(fast_factory, tracked_worker)
         reviewed: set[str] = set()
 
-        def review_once(task, diff, gate_ok, gate_out):
+        def review_once(  # noqa: E501
+            task: dict[str, Any], diff: str, gate_ok: bool, gate_out: str
+        ) -> tuple[str, str]:
             if task["id"] == "TASK-001" and task["id"] not in reviewed:
                 reviewed.add(task["id"])
                 return "changes", "apply the requested correction"
             return "approve", ""
 
-        rc = run_goal(
+        rc: int = run_goal(
             fast_factory,
             "goal",
             max_loops=100,
