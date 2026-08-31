@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from orchestrator.core import errors
 from orchestrator.orchestration import service as _service
@@ -12,7 +13,7 @@ from orchestrator.orchestration import service as _service
 DEFAULT_SERVER_NAME = "oc-orchestrator"
 
 
-def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> object:
+def build_server(mcp_cls: Callable[[str], Any], root: Path | None = None) -> Any:
     base = root if root is not None else Path.cwd()
 
     mcp = mcp_cls(DEFAULT_SERVER_NAME)
@@ -112,7 +113,7 @@ def build_server(mcp_cls: Callable[[str], object], root: Path | None = None) -> 
 
 
 def run_serve(
-    load_server: Callable[[str], object] | None = None,
+    load_server: Callable[[str], Any] | None = None,
     root: Path | None = None,
 ) -> int:
     """Start the stdio MCP server. Returns 0 on clean shutdown, 1 on setup failure."""

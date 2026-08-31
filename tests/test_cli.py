@@ -123,6 +123,33 @@ class TestStatus:
         assert "WORKING" in out
         assert "agent/task-001-work" in out
 
+    def test_unexpected_failure_returns_clean_error_and_logs_traceback(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        def explode(args):
+            raise RuntimeError("kaboom")
+
+        monkeypatch.setattr("orchestrator.cli.cmd_status", explode)
+        rc = run(["status", str(tmp_path)])
+
+        assert rc == 1
+        assert "RuntimeError: kaboom" in capsys.readouterr().err
+        log = tmp_path / ".orchestrator" / "logs" / "orchestrator.log"
+        text = log.read_text()
+        assert "Traceback" in text
+        assert "kaboom" in text
+
+
+def test_file_log_captures_trace_level(tmp_path):
+    from orchestrator.logs import TRACE, get, setup_logging
+
+    path = setup_logging(tmp_path)
+    get("test").log(TRACE, "deep event detail")
+    for handler in get("test").parent.handlers:
+        handler.flush()
+
+    assert "deep event detail" in path.read_text()
+
 
 class TestVersion:
     def test_version_flag(self, capsys):

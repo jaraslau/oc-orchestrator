@@ -54,16 +54,22 @@ class SessionRunner:
         if self._default_model is None:
             provider_id, model_id = self.client.default_model()
             self._default_model = f"{provider_id}/{model_id}"
+            log.info("server default model: %s", self._default_model)
         return self._default_model
 
     def resolve_chain(self, requested: str | None) -> ModelChain:
         providers = self.client.providers()
+        log.debug("available providers: %s", {k: len(v) for k, v in providers.items()})
         default_provider, default_model_id = self.default_model().split("/", 1)
         providers.setdefault(default_provider, [])
         if default_model_id not in providers[default_provider]:
             providers[default_provider].append(default_model_id)
         if requested is not None:
-            parse_model_ref(requested, providers, default_provider)
+            try:
+                parse_model_ref(requested, providers, default_provider)
+            except OrchestratorError:
+                log.warning("requested model '%s' unavailable; using fallback chain", requested)
+                requested = None
         chain = ModelChain.build(requested, self.fallbacks, self.default_model())
         validated: list[str] = []
         for ref in chain.models:
@@ -77,6 +83,7 @@ class SessionRunner:
         chain.models = validated
         if not chain.models:
             raise OrchestratorError("no usable models in chain after validation")
+        log.info("model chain: %s", " -> ".join(chain.models))
         return chain
 
     def run(
@@ -94,6 +101,7 @@ class SessionRunner:
         attempts: list[tuple[str, str]] = []
         while not chain.exhausted:
             current = chain.current
+            log.info("model attempt %d: %s", len(attempts) + 1, current)
             try:
                 result = self._run_single(
                     prompt,
@@ -113,7 +121,7 @@ class SessionRunner:
             except Exception as exc:
                 kind = classify(str(exc))
                 attempts.append((current, f"[{kind.value}] {exc}"))
-                log.error("model %s failed (%s): %s", current, kind.value, exc)
+                log.error("model %s failed (%s): %s", current, kind.value, exc, exc_info=True)
                 if kind not in PROVIDER_SIDED or chain.advance(kind.value) is None:
                     raise
         raise OrchestratorError("model chain exhausted without a result")
@@ -121,7 +129,7 @@ class SessionRunner:
     def abort_session(self, handle: SessionHandle) -> None:
         try:
             self.client.abort(handle.session_id, handle.directory)
-        except OpencodeApiError as exc:
+        except (OpencodeApiError, TimeoutError) as exc:
             log.warning("abort failed for %s: %s", handle.session_id, exc)
 
     def _run_single(

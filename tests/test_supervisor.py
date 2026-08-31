@@ -1,5 +1,6 @@
 import json
 import subprocess
+import threading
 
 import pytest
 
@@ -9,11 +10,12 @@ from orchestrator.orchestration.supervisor import (
     PlannedTask,
     PlanningError,
     extract_json_block,
+    llm_review,
     parse_plan,
     plan_tasks,
     run_goal,
 )
-from tests.conftest import configured
+from tests.conftest import HANDOFF_OK, configured
 
 
 class TestExtractJson:
@@ -67,6 +69,27 @@ class TestParsePlan:
         with pytest.raises(PlanningError):
             parse_plan(json.dumps({"tasks": [{"objective": "no title"}]}))
 
+    @pytest.mark.parametrize(
+        "task",
+        [None, {"title": "x", "depends_on": "not-a-list"}],
+    )
+    def test_malformed_task_rejected(self, task):
+        with pytest.raises(PlanningError):
+            parse_plan(json.dumps({"tasks": [task]}))
+
+
+def test_invalid_review_verdict_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr("orchestrator.orchestration.supervisor.call_llm", lambda *a, **kw: "junk")
+    task = {
+        "title": "x",
+        "objective": "",
+        "acceptance_criteria": [],
+        "_root": str(tmp_path),
+    }
+
+    with pytest.raises(RuntimeError, match="no valid"):
+        llm_review(task, "", True, "")
+
 
 class TestPlanRetry:
     def test_retries_once_with_feedback(self, monkeypatch):
@@ -83,6 +106,24 @@ class TestPlanRetry:
         assert [p.title for p in plans] == ["ok"]
         assert len(calls) == 2
         assert "not valid plan JSON" in calls[1]
+
+    def test_falls_back_to_one_worker_when_planner_is_unavailable(self, monkeypatch):
+        monkeypatch.setattr(
+            "orchestrator.orchestration.supervisor.call_llm",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+        )
+
+        plans = plan_tasks("/tmp/x", Config(worker_model="provider/worker"), "ship feature")
+
+        assert plans == [
+            PlannedTask(
+                title="ship feature",
+                objective="ship feature",
+                acceptance_criteria=["The requested goal is complete and relevant checks pass"],
+                model="provider/worker",
+                effort="high",
+            )
+        ]
 
 
 @pytest.fixture()
@@ -243,3 +284,112 @@ class TestRunGoal:
         by_id = {t.id: t for t in lg.tasks.values()}
         child = next(t for t in lg.tasks.values() if t.title == "Second")
         assert by_id[child.dependencies[0]].title == "First"
+
+    def test_reviewer_failure_retries_then_fails_closed(self, fast_factory):
+        calls = []
+
+        def broken_reviewer(*args):
+            calls.append(1)
+            raise RuntimeError("review service offline")
+
+        rc = run_goal(
+            fast_factory,
+            "goal",
+            max_loops=10,
+            max_retries=1,
+            poll_seconds=0.01,
+            planner=lambda root, config, goal: [PlannedTask(title="Review me")],
+            gate_runner=lambda wt, cfg: (True, "ok"),
+            reviewer=broken_reviewer,
+            io=lambda s: None,
+        )
+
+        assert rc == 1
+        assert len(calls) == 2
+        task = next(iter(Ledger.load(ledger_path(fast_factory)).tasks.values()))
+        assert task.status == TaskStatus.BLOCKED
+        assert "review failed" in (task.last_result or "")
+
+    def test_failed_gate_cannot_be_overridden_by_reviewer(self, fast_factory):
+        rc = run_goal(
+            fast_factory,
+            "goal",
+            max_loops=10,
+            max_corrections=0,
+            poll_seconds=0.01,
+            planner=lambda root, config, goal: [PlannedTask(title="Unsafe")],
+            gate_runner=lambda wt, cfg: (False, "tests failed"),
+            reviewer=_approve_all(),
+            io=lambda s: None,
+        )
+
+        assert rc == 1
+        task = next(iter(Ledger.load(ledger_path(fast_factory)).tasks.values()))
+        assert task.status == TaskStatus.BLOCKED
+
+    def test_loop_exhaustion_cancels_and_marks_worker_blocked(self, fast_factory):
+        hold = threading.Event()
+        runner = configured(
+            fast_factory,
+            lambda prompt, cwd: (hold.wait(timeout=2), HANDOFF_OK)[1],
+        )
+
+        rc = run_goal(
+            fast_factory,
+            "goal",
+            max_loops=1,
+            poll_seconds=0.01,
+            planner=lambda root, config, goal: [PlannedTask(title="Slow")],
+            reviewer=_approve_all(),
+            io=lambda s: None,
+        )
+        hold.set()
+
+        assert rc == 1
+        assert runner.aborted
+        task = next(iter(Ledger.load(ledger_path(fast_factory)).tasks.values()))
+        assert task.status == TaskStatus.BLOCKED
+        assert "loop budget exhausted" in (task.last_result or "")
+
+    def test_worker_limit_also_applies_to_correction_dispatches(self, fast_factory):
+        lock = threading.Lock()
+        active = peak = 0
+
+        def tracked_worker(prompt, cwd):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                threading.Event().wait(0.2 if "TASK-002" in prompt else 0.05)
+                return HANDOFF_OK
+            finally:
+                with lock:
+                    active -= 1
+
+        configured(fast_factory, tracked_worker)
+        reviewed: set[str] = set()
+
+        def review_once(task, diff, gate_ok, gate_out):
+            if task["id"] == "TASK-001" and task["id"] not in reviewed:
+                reviewed.add(task["id"])
+                return "changes", "apply the requested correction"
+            return "approve", ""
+
+        rc = run_goal(
+            fast_factory,
+            "goal",
+            max_loops=100,
+            max_workers=1,
+            poll_seconds=0.01,
+            planner=lambda root, config, goal: [
+                PlannedTask(title="First"),
+                PlannedTask(title="Second"),
+            ],
+            gate_runner=lambda wt, cfg: (True, "ok"),
+            reviewer=review_once,
+            io=lambda s: None,
+        )
+
+        assert rc == 0
+        assert peak == 1

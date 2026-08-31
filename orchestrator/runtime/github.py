@@ -13,11 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from orchestrator.core.errors import GhError
+from orchestrator.logs import get
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 PR_NUMBER_RE = re.compile(r"/pull(?:s)?/(\d+)/?$")
 LIST_FIELDS = ["number", "url", "headRefName", "title", "state"]
+log = get("github")
 
 
 @dataclass
@@ -49,10 +51,14 @@ class GhClient:
             self._runner = runner
 
     def _run(self, *args: str) -> str:
+        safe_args = args[:3]
+        log.debug("gh %s", " ".join(safe_args))
         proc = self._runner(*args)
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
+            log.error("gh %s failed (exit=%d): %s", " ".join(safe_args), proc.returncode, detail)
             raise GhError(f"gh {' '.join(args[:2])} failed: {detail}")
+        log.debug("gh %s succeeded", " ".join(safe_args))
         return proc.stdout
 
     def check(self) -> None:

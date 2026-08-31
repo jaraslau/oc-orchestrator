@@ -9,8 +9,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from orchestrator.logs import get
+
+log = get("storage")
+
 
 def read_json(path: Path) -> Any:
+    log.debug("reading JSON: %s", path)
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -24,7 +29,9 @@ def write_json_atomic(path: Path, data: Any) -> None:
             json.dump(data, f, indent=2)
             f.write("\n")
         os.replace(tmp_name, path)
+        log.debug("wrote JSON atomically: %s", path)
     except BaseException:
+        log.exception("atomic JSON write failed: %s", path)
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_name)
         raise

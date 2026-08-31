@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
+from orchestrator.core.errors import OrchestratorError
 from orchestrator.logs import get
 
 log = get("resilience")
@@ -36,6 +37,7 @@ PROVIDER_SIDED: frozenset[ErrorKind] = frozenset(
         ErrorKind.RATE_LIMITED,
         ErrorKind.PROVIDER_UNAVAILABLE,
         ErrorKind.MODEL_NOT_FOUND,
+        ErrorKind.TRANSIENT_NETWORK,
     }
 )
 
@@ -82,10 +84,6 @@ def classify(text: str) -> ErrorKind:
     return ErrorKind.UNKNOWN
 
 
-class OrchestratorError(RuntimeError):
-    pass
-
-
 @dataclass
 class ModelChain:
     models: list[str]
@@ -94,7 +92,7 @@ class ModelChain:
     @classmethod
     def build(cls, primary: str | None, fallbacks: list[str], default: str) -> ModelChain:
         seen: list[str] = []
-        for model in [primary, *fallbacks]:
+        for model in [primary, *fallbacks, default]:
             candidate = model or default
             if candidate not in seen:
                 seen.append(candidate)

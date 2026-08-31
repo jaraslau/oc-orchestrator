@@ -49,14 +49,15 @@ class TestModelChain:
 
     def test_build_primary_first_no_duplicates(self):
         chain = ModelChain.build("a", ["a", "b"], "d")
-        assert chain.models == ["a", "b"]
+        assert chain.models == ["a", "b", "d"]
 
     def test_advance_walks_chain_then_none(self):
         chain = ModelChain.build("a", ["b", "c"], "z")
         assert chain.current == "a"
         assert chain.advance("auth") == "b"
         assert chain.advance("quota") == "c"
-        assert chain.advance("rate") is None
+        assert chain.advance("rate") == "z"
+        assert chain.advance("down") is None
         assert chain.exhausted
 
 

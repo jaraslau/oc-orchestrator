@@ -83,6 +83,12 @@ class Dispatcher:
             registry = self._load_registry()
             registry[record.task_id] = asdict(record)
             self._save_registry(registry)
+        log.debug(
+            "dispatch record stored: task=%s exit=%s session=%s",
+            record.task_id,
+            record.exit_code,
+            record.session_id,
+        )
 
     def spawn(
         self,
@@ -108,9 +114,23 @@ class Dispatcher:
             started_at=_now(),
         )
         self._store_record(record)
+        log.info(
+            "worker thread starting: task=%s branch=%s agent=%s model=%s variant=%s",
+            task_id,
+            branch,
+            agent_name or config.worker_agent,
+            model or "default",
+            variant or "default",
+        )
 
         def work() -> None:
             self._handles[task_id] = None
+
+            def capture_session(handle: Any) -> None:
+                self._handles[task_id] = handle
+                record.session_id = handle.session_id
+                self._store_record(record)
+
             try:
                 result = self._runner.run(
                     prompt,
@@ -119,20 +139,26 @@ class Dispatcher:
                     model=model,
                     variant=variant,
                     timeout=config.worker_timeout,
-                    on_session=lambda handle: self._handles.__setitem__(task_id, handle),
+                    on_session=capture_session,
                 )
                 record.session_id = result.session_id
                 record.model_used = result.models_tried[-1] if result.models_tried else model
-                log_path.write_text(
-                    f"[model used: {result.models_tried[-1]}]\n\n{result.text}\n", encoding="utf-8"
-                )
+                with log_path.open("a", encoding="utf-8") as fh:
+                    fh.write(
+                        f"\n[session: {result.session_id}; "
+                        f"model used: {record.model_used or 'server-default'}]\n\n"
+                        f"{result.text}\n"
+                    )
                 self._finalize(record, 0)
                 log.info("task %s completed (session %s)", task_id, result.session_id)
             except Exception as exc:
                 diagnosis = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-                log.error("task %s failed: %s", task_id, diagnosis)
-                with log_path.open("a", encoding="utf-8") as fh:
-                    fh.write(f"\n[orchestrator] worker failed: {diagnosis}\n")
+                log.exception("task %s failed: %s", task_id, diagnosis)
+                try:
+                    with log_path.open("a", encoding="utf-8") as fh:
+                        fh.write(f"\n[orchestrator] worker failed: {diagnosis}\n")
+                except OSError:
+                    log.exception("could not append failure to worker log: %s", log_path)
                 if record.model_used is None:
                     record.model_used = model or ""
                 self._finalize(record, 1)
@@ -141,6 +167,7 @@ class Dispatcher:
 
         thread = threading.Thread(target=work, name=f"worker-{task_id}", daemon=True)
         thread.start()
+        log.debug("worker thread dispatched: task=%s thread=%s", task_id, thread.name)
         return record
 
     def poll(self, task_id: str) -> DispatchRecord | None:
@@ -148,8 +175,10 @@ class Dispatcher:
         with self._registry_lock:
             raw = self._load_registry().get(task_id)
         if raw is None:
+            log.log(5, "poll: no dispatch record for %s", task_id)
             return None
         record = DispatchRecord(**raw)
+        log.log(5, "poll: task=%s exit=%s ended=%s", task_id, record.exit_code, record.ended_at)
         if record.exit_code is not None:
             return record
 
@@ -163,6 +192,7 @@ class Dispatcher:
         record.exit_code = exit_code
         record.ended_at = _now()
         self._store_record(record)
+        log.info("worker finalized: task=%s exit=%s", record.task_id, exit_code)
 
     def terminate(self, task_id: str) -> bool:
         """Abort a running worker session."""
@@ -171,6 +201,7 @@ class Dispatcher:
             self._runner.abort_session(handle)
             log.info("aborted session %s for task %s", handle.session_id, task_id)
             return True
+        log.debug("no live session to abort for task %s", task_id)
         return False
 
     @staticmethod

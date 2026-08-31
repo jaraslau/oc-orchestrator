@@ -63,6 +63,12 @@ class TestPersistence:
         with pytest.raises(ValueError, match="NOPE"):
             Ledger.load(ledger_path)
 
+    @pytest.mark.parametrize("body", ["[]", '{"tasks": [null]}', '{"tasks": [{}]}'])
+    def test_load_rejects_malformed_shape(self, ledger_path, body):
+        ledger_path.write_text(body)
+        with pytest.raises(ValueError, match="tasks array|not an object|without id/title"):
+            Ledger.load(ledger_path)
+
 
 class TestQueries:
     def test_get_missing_raises_keyerror_with_id(self, ledger_path):

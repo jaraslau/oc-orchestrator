@@ -26,16 +26,19 @@ class EventTap:
 
     def start(self) -> None:
         if self._thread is not None:
+            log.debug("event tap already running")
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="opencode-events", daemon=True)
         self._thread.start()
+        log.info("event tap started")
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
+        log.info("event tap stopped")
 
     def pop_error(self, session_id: str) -> dict[str, Any] | None:
         return self.errors.pop(session_id, None)

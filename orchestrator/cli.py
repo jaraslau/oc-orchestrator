@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from collections.abc import Sequence
@@ -56,8 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("goal")
     p_run.add_argument("--path", type=Path, default=Path("."), help="target repository")
     p_run.add_argument("--dry-run", action="store_true", help="plan only, create nothing")
-    p_run.add_argument("--max-loops", type=int, default=40)
-    p_run.add_argument("--max-corrections", type=int, default=2)
+    p_run.add_argument("--max-loops", type=int, default=40, help="supervisor loop budget")
+    p_run.add_argument(
+        "--max-corrections", type=int, default=2, help="worker correction budget per task"
+    )
+    p_run.add_argument(
+        "--max-retries", type=int, default=1, help="infrastructure/worker retry budget"
+    )
+    p_run.add_argument(
+        "--max-workers", type=int, default=None, help="override concurrent worker limit"
+    )
     p_run.add_argument("--push", action="store_true", help="push primary branch after merges")
 
     return parser
@@ -68,11 +77,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     root_hint = getattr(args, "path", None) or getattr(args, "root", None)
     from orchestrator.logs import setup_logging
 
-    log_file = setup_logging(
-        Path(root_hint).resolve() if root_hint else Path.cwd(), verbose=args.verbose
-    )
+    try:
+        log_file = setup_logging(
+            Path(root_hint).resolve() if root_hint else Path.cwd(), verbose=args.verbose
+        )
+    except OSError as exc:
+        print(f"error: cannot initialize logging: {exc}", file=sys.stderr)
+        return 1
     if not args.verbose:
         print(f"logging to {log_file} (use --verbose for live detail)", file=sys.stderr)
+    log = logging.getLogger("orchestrator.cli")
+    log.info("command start: %s (root=%s)", args.command, root_hint or Path.cwd())
     handlers = {
         "init": cmd_init,
         "serve": cmd_serve,
@@ -80,7 +95,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         "report": cmd_report,
         "run": cmd_run,
     }
-    return handlers[args.command](args)
+    try:
+        code = handlers[args.command](args)
+    except KeyboardInterrupt:
+        log.warning("command interrupted: %s", args.command)
+        print("interrupted", file=sys.stderr)
+        return 130
+    except Exception as exc:
+        log.exception("command failed: %s", args.command)
+        print(f"error: {type(exc).__name__}: {exc} (details: {log_file})", file=sys.stderr)
+        return 1
+    log.info("command done: %s (exit=%d)", args.command, code)
+    return code
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -170,23 +196,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     from orchestrator.orchestration.supervisor import run_goal
 
     root = args.path.resolve()
-    if not (root / ".orchestrator").exists():
+    if not ledger_path(root).exists():
         print(f"not initialized: {root}; run 'oc-orchestrator init' first", file=sys.stderr)
         return 1
-    try:
-        code = run_goal(
-            root,
-            args.goal,
-            dry_run=args.dry_run,
-            max_loops=args.max_loops,
-            max_corrections=args.max_corrections,
-            push=args.push,
-            io=print,
-        )
-    except KeyboardInterrupt:
-        print("interrupted; shutting down worker sessions", file=sys.stderr)
-        code = 130
-    return code
+    return run_goal(
+        root,
+        args.goal,
+        dry_run=args.dry_run,
+        max_loops=args.max_loops,
+        max_corrections=args.max_corrections,
+        max_retries=args.max_retries,
+        max_workers=args.max_workers,
+        push=args.push,
+        io=print,
+    )
 
 
 def _merge_opencode_config(root: Path) -> bool:

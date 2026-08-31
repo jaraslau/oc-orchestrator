@@ -82,16 +82,18 @@ class TestResolveChain:
         chain = runner.resolve_chain(None)
         assert chain.models == ["opencode/big-pickle", "opencode/backup-model"]
 
-    def test_explicit_unknown_model_raises(self):
+    def test_explicit_unknown_model_falls_back_to_default(self):
         client = FakeClient()
         runner = make_runner(client)
-        with pytest.raises(Exception, match="not offered"):
-            runner.resolve_chain("anthropic/nonexistent")
+        assert runner.resolve_chain("anthropic/nonexistent").models == ["opencode/big-pickle"]
 
     def test_unqualified_model_is_normalized_to_default_provider(self):
         client = FakeClient()
         runner = make_runner(client)
-        assert runner.resolve_chain("backup-model").models == ["opencode/backup-model"]
+        assert runner.resolve_chain("backup-model").models == [
+            "opencode/backup-model",
+            "opencode/big-pickle",
+        ]
 
 
 class TestRun:

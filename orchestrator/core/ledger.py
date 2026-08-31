@@ -9,8 +9,10 @@ from enum import StrEnum
 from pathlib import Path
 
 from orchestrator.core.storage import read_json, write_json_atomic
+from orchestrator.logs import get
 
 TASK_ID_RE = re.compile(r"^TASK-(\d{3,})$")
+log = get("ledger")
 
 
 class TaskStatus(StrEnum):
@@ -57,7 +59,7 @@ class Task:
 
 def _coerce_status(value: object) -> TaskStatus:
     try:
-        return TaskStatus(value)
+        return TaskStatus(str(value))
     except ValueError:
         raise ValueError(f"unknown task status: {value!r}") from None
 
@@ -70,20 +72,29 @@ class Ledger:
     @classmethod
     def load(cls, path: Path) -> Ledger:
         if not path.exists():
+            log.debug("ledger missing; using empty ledger: %s", path)
             return cls(path)
         data = read_json(path)
+        if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
+            raise ValueError(f"{path} must contain an object with a tasks array")
         known_fields = {f.name for f in fields(Task)}
         tasks: dict[str, Task] = {}
         for raw in data.get("tasks", []):
+            if not isinstance(raw, dict):
+                raise ValueError(f"{path} contains a task that is not an object")
             fields_dict = dict(raw)
+            if not fields_dict.get("id") or not fields_dict.get("title"):
+                raise ValueError(f"{path} contains a task without id/title")
             fields_dict["status"] = _coerce_status(fields_dict.get("status"))
             task = Task(**{k: v for k, v in fields_dict.items() if k in known_fields})
             tasks[task.id] = task
+        log.debug("loaded ledger: %s (%d task(s))", path, len(tasks))
         return cls(path, tasks)
 
     def save(self) -> None:
         ordered = sorted(self.tasks.values(), key=lambda t: t.id)
         write_json_atomic(self.path, {"tasks": [t.to_dict() for t in ordered]})
+        log.debug("saved ledger: %s (%d task(s))", self.path, len(ordered))
 
     def next_task_id(self) -> str:
         nums = [int(m.group(1)) for tid in self.tasks if (m := TASK_ID_RE.match(tid)) is not None]
@@ -117,6 +128,7 @@ class Ledger:
             effort=effort,
         )
         self.tasks[task.id] = task
+        log.info("task %s created: %s", task.id, task.title)
         return task
 
     def get(self, task_id: str) -> Task:
@@ -128,8 +140,11 @@ class Ledger:
     def update_status(self, task_id: str, status: TaskStatus | str) -> Task:
         task = self.get(task_id)
         new_status = status if isinstance(status, TaskStatus) else _coerce_status(status)
+        previous = task.status
         task.status = new_status
         task.updated_at = _now()
+        if new_status != previous:
+            log.info("task %s status: %s -> %s", task_id, previous.value, new_status.value)
         return task
 
     def filter(self, status: TaskStatus | str | None = None) -> list[Task]:

@@ -6,13 +6,17 @@ OpencodeApiError with full status+body so resilience can classify.
 
 from __future__ import annotations
 
-import contextlib
 import json
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+from orchestrator.logs import get
+
+log = get("client")
 
 
 class OpencodeApiError(RuntimeError):
@@ -36,26 +40,46 @@ class OpencodeClient:
     def _request(
         self, method: str, path: str, *, timeout: float | None = None, **kwargs: Any
     ) -> Any:
+        started = time.monotonic()
+        log.debug("HTTP %s %s", method, path)
         try:
             response = httpx.request(
                 method,
                 f"{self.base_url}{path}",
-                timeout=timeout or self._timeout,
+                timeout=self._timeout if timeout is None else timeout,
                 trust_env=False,
                 **kwargs,
             )
         except httpx.TimeoutException as exc:
+            log.warning(
+                "HTTP %s %s timed out after %.3fs",
+                method,
+                path,
+                time.monotonic() - started,
+            )
             raise TimeoutError(f"opencode request timed out: {exc}") from exc
         except httpx.HTTPError as exc:
+            log.warning(
+                "HTTP %s %s failed after %.3fs: %s",
+                method,
+                path,
+                time.monotonic() - started,
+                exc,
+            )
             raise OpencodeApiError(0, f"connection failure: {exc}") from exc
+        elapsed = time.monotonic() - started
+        log.debug("HTTP %s %s -> %d in %.3fs", method, path, response.status_code, elapsed)
         if response.status_code >= 400:
+            log.warning("HTTP %s %s returned %d", method, path, response.status_code)
             raise OpencodeApiError(response.status_code, response.text)
         if not response.content:
             return None
         try:
             return response.json()
-        except ValueError:
-            return None
+        except ValueError as exc:
+            raise OpencodeApiError(
+                response.status_code, f"invalid JSON response: {response.text[:400]}"
+            ) from exc
 
     def providers(self) -> dict[str, list[str]]:
         data = self._request("GET", "/config/providers") or {}
@@ -124,6 +148,7 @@ class OpencodeClient:
                 raise
 
     def events(self) -> Iterator[dict[str, Any]]:
+        log.debug("opening event stream: %s/event", self.base_url)
         with httpx.stream(
             "GET", f"{self.base_url}/event", timeout=None, trust_env=False
         ) as response:
@@ -136,8 +161,11 @@ class OpencodeClient:
                     continue
                 if line.strip() or not buffer:
                     continue
-                with contextlib.suppress(json.JSONDecodeError):
-                    yield json.loads("\n".join(buffer))
+                payload = "\n".join(buffer)
+                try:
+                    yield json.loads(payload)
+                except json.JSONDecodeError:
+                    log.warning("discarding malformed event frame: %r", payload[:400])
                 buffer.clear()
 
 

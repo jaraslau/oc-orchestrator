@@ -7,6 +7,7 @@ from pathlib import Path
 from orchestrator.core.config import Config, ledger_path, load_config
 from orchestrator.core.errors import DispatchBlocked, InvalidState, TaskNotFound
 from orchestrator.core.ledger import Ledger, Task, TaskStatus
+from orchestrator.logs import get, traced
 from orchestrator.orchestration.prompts import render_delegation
 from orchestrator.runtime.client import OpencodeClient
 from orchestrator.runtime.dispatcher import (
@@ -22,20 +23,24 @@ from orchestrator.runtime.runner import SessionRunner
 from orchestrator.runtime.worktrees import branch_name, ensure_worktree, remove_worktree
 
 _TERMINAL_STATUSES = {TaskStatus.MERGED, TaskStatus.CANCELLED}
+log = get("service")
 
 _dispatchers: dict[str, Dispatcher] = {}
 
 
 class ServerRuntime:
     def __init__(self, root: Path, config: Config) -> None:
+        log.info("runtime starting: root=%s", root)
         self.server = OpencodeServer(config.opencode_bin, config.server_port, Path(root))
         self.base_url = self.server.start()
         self.client = OpencodeClient(self.base_url)
         self.tap = EventTap(self.client)
         self.tap.start()
         self.runner = SessionRunner(self.client, self.tap, fallback_models=config.fallback_models)
+        log.info("runtime ready: %s", self.base_url)
 
     def close(self) -> None:
+        log.info("runtime stopping")
         self.tap.stop()
         self.server.stop()
 
@@ -43,16 +48,19 @@ class ServerRuntime:
 _runtimes: dict[str, ServerRuntime] = {}
 
 
+@traced
 def get_runtime(root: Path) -> ServerRuntime:
     """Shared opencode-server runtime per repo."""
     key = str(Path(root).resolve())
     if key in _runtimes:
+        log.debug("reusing runtime: %s", key)
         return _runtimes[key]
     runtime = ServerRuntime(Path(key), load_config(Path(key)))
     _runtimes[key] = runtime
     return runtime
 
 
+@traced
 def shutdown_runtime(root: Path) -> None:
     key = str(Path(root).resolve())
     runtime = _runtimes.pop(key, None)
@@ -65,11 +73,13 @@ def get_dispatcher(root: Path) -> Dispatcher:
     """One Dispatcher per repo per process; server-backed when available."""
     key = str(Path(root).resolve())
     if key in _dispatchers:
+        log.debug("reusing dispatcher: %s", key)
         return _dispatchers[key]
     _dispatchers[key] = Dispatcher(Path(key), get_runtime(root).runner)
     return _dispatchers[key]
 
 
+@traced
 def call_llm(
     root: Path,
     prompt: str,
@@ -80,6 +90,14 @@ def call_llm(
     timeout: float = 900.0,
 ) -> str:
     """Run a planner/reviewer session with failover."""
+    log.info(
+        "LLM call: agent=%s model=%s effort=%s timeout=%.1fs prompt_chars=%d",
+        agent or "default",
+        model or "default",
+        effort or "default",
+        timeout,
+        len(prompt),
+    )
     result = get_runtime(root).runner.run(
         prompt,
         Path(root),
@@ -88,9 +106,11 @@ def call_llm(
         variant=effort,
         timeout=timeout,
     )
+    log.info("LLM response: session=%s chars=%d", result.session_id, len(result.text))
     return result.text
 
 
+@traced
 def create_task(
     root: Path,
     *,
@@ -117,6 +137,7 @@ def create_task(
         task.role = role
     task.branch = branch_name(config, task.id, title)
     ledger.save()
+    log.info("task created: %s branch=%s role=%s", task.id, task.branch, role or "default")
     return task.to_dict()
 
 
@@ -137,15 +158,18 @@ def resolve_agent(root: Path, config: Config, explicit: str | None, task: Task) 
     return name
 
 
+@traced
 def list_tasks(root: Path, status: str | None = None) -> list[dict]:
     ledger = Ledger.load(ledger_path(root))
     return [t.to_dict() for t in ledger.filter(status=status)]
 
 
+@traced
 def get_task(root: Path, task_id: str) -> dict:
     return _load_ledger(root).get(task_id).to_dict()
 
 
+@traced
 def dispatch_task(
     root: Path,
     task_id: str,
@@ -158,6 +182,7 @@ def dispatch_task(
     config = load_config(root)
     ledger = _load_ledger(root)
     task = ledger.get(task_id)
+    log.info("dispatch requested: task=%s status=%s", task_id, task.status.value)
 
     if task.status in _TERMINAL_STATUSES:
         raise InvalidState(f"{task_id} is {task.status.value} and cannot be dispatched")
@@ -190,6 +215,14 @@ def dispatch_task(
     task.agent = agent_name
     ledger.update_status(task.id, TaskStatus.DISPATCHED)
     ledger.save()
+    log.info(
+        "dispatch started: task=%s branch=%s agent=%s model=%s log=%s",
+        task_id,
+        branch,
+        agent_name,
+        model or task.model or config.worker_model or "default",
+        record.log_path,
+    )
     return {
         "task": task.to_dict(),
         "worktree": str(worktree),
@@ -198,6 +231,7 @@ def dispatch_task(
     }
 
 
+@traced
 def task_status(root: Path, task_id: str, timeout: float = 0.0) -> dict:
     """Return current task state, reconciling with the worker process first."""
     root = Path(root)
@@ -216,6 +250,7 @@ def task_status(root: Path, task_id: str, timeout: float = 0.0) -> dict:
     return {"task": task.to_dict(), "worker": _record_dict(record)}
 
 
+@traced
 def cancel_task(root: Path, task_id: str) -> dict:
     root = Path(root)
     ledger = _load_ledger(root)
@@ -225,9 +260,11 @@ def cancel_task(root: Path, task_id: str) -> dict:
     get_dispatcher(root).terminate(task_id)
     ledger.update_status(task_id, TaskStatus.CANCELLED)
     ledger.save()
+    log.info("task cancelled: %s", task_id)
     return task.to_dict()
 
 
+@traced
 def cleanup_worktree(root: Path, task_id: str) -> bool:
     config = load_config(Path(root))
     task = _load_ledger(Path(root)).get(task_id)
@@ -287,6 +324,13 @@ def _reconcile(ledger: Ledger, task: Task, record: DispatchRecord) -> None:
 
     task.last_result = note
     ledger.update_status(task.id, status)
+    log.info(
+        "worker reconciled: task=%s exit=%s status=%s note=%s",
+        task.id,
+        record.exit_code,
+        status.value,
+        note,
+    )
 
 
 def _record_dict(record: DispatchRecord | None) -> dict | None:
@@ -329,6 +373,7 @@ def _default_pr_body(task: Task) -> str:
     return "\n".join(lines) + "\n"
 
 
+@traced
 def open_pr(
     root: Path,
     task_id: str,
@@ -359,9 +404,11 @@ def open_pr(
     if task.status == TaskStatus.REVIEWING:
         ledger.update_status(task_id, TaskStatus.PR_OPEN)
     ledger.save()
+    log.info("PR ready: task=%s number=%d url=%s", task_id, pr.number, pr.url)
     return {"task": task.to_dict(), "pr": {"number": pr.number, "url": pr.url}}
 
 
+@traced
 def request_changes(root: Path, task_id: str, comment: str, gh_runner=None) -> dict:
     root = Path(root)
     config = load_config(root)
@@ -381,9 +428,11 @@ def request_changes(root: Path, task_id: str, comment: str, gh_runner=None) -> d
     task.last_result = f"changes requested: {comment}"
     ledger.update_status(task_id, TaskStatus.CHANGES_REQUESTED)
     ledger.save()
+    log.info("changes requested: task=%s posted_to_pr=%s", task_id, posted)
     return {"task": task.to_dict(), "posted_to_pr": posted}
 
 
+@traced
 def merge_task(root: Path, task_id: str, gh_runner=None) -> dict:
     root = Path(root)
     config = load_config(root)
@@ -411,11 +460,16 @@ def merge_task(root: Path, task_id: str, gh_runner=None) -> dict:
     client.merge(number, method=config.merge_method)
     ledger.update_status(task_id, TaskStatus.MERGED)
     task.last_result = f"merged PR #{number}"
-    remove_worktree(root, config, task.branch or "")
     ledger.save()
+    try:
+        remove_worktree(root, config, task.branch or "")
+    except Exception:
+        log.exception("worktree cleanup failed after merging %s", task_id)
+    log.info("task merged via PR: task=%s pr=%d", task_id, number)
     return task.to_dict()
 
 
+@traced
 def pr_diff(root: Path, task_id: str, gh_runner=None) -> str:
     root = Path(root)
     config = load_config(root)
@@ -428,6 +482,7 @@ def pr_diff(root: Path, task_id: str, gh_runner=None) -> str:
     return _client(root, config, gh_runner).pr_diff(number)
 
 
+@traced
 def list_open_prs(root: Path, gh_runner=None) -> list[dict]:
     root = Path(root)
     config = load_config(root)
@@ -438,6 +493,7 @@ def list_open_prs(root: Path, gh_runner=None) -> list[dict]:
     ]
 
 
+@traced
 def generate_report(root: Path) -> str:
     """Human-facing project report in the playbook's completion format."""
     ledger = Ledger.load(ledger_path(Path(root)))

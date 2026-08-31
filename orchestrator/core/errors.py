@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-class OrchestratorError(Exception):
+class OrchestratorError(RuntimeError):
     """Base class for all oc-orchestrator errors."""
 
 

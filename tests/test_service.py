@@ -1,4 +1,5 @@
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -116,6 +117,9 @@ class TestDispatchGuards:
         again = service.dispatch_task(repo, task["id"])
         assert again["task"]["branch"] == task["branch"]
         service.task_status(repo, task["id"], timeout=1)
+        history = Path(again["log"]).read_text()
+        assert "worker failed: RuntimeError: failed" in history
+        assert "STATUS: DONE" in history
 
     def test_cancel_terminates_worker(self, repo):
         gate = threading.Event()

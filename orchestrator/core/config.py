@@ -24,6 +24,7 @@ class Config:
     planner_model: str | None = None
     reviewer_model: str | None = None
     fallback_models: list[str] = field(default_factory=list)
+    max_parallel_tasks: int = 4
     worker_timeout: float = 3600.0
     gate_commands: list[str] = field(default_factory=list)
     opencode_bin: str = "opencode"

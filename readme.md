@@ -58,24 +58,26 @@ Exit code is `0` only when **every** task merged.
 
 ```sh
 oc-orchestrator run "<goal>" [--path REPO] [--dry-run]
-    [--max-loops N] [--max-corrections N] [--push]
+    [--max-workers N] [--max-loops N] [--max-retries N]
+    [--max-corrections N] [--push]
 ```
 
 Pipeline:
 
-1. **Plan** — LLM converts the goal into 1–5 JSON tasks: title, objective,
-   acceptance criteria, dependencies, optional role and model.
+1. **Plan** — LLM chooses the smallest useful worker count and emits JSON tasks
+   with objective, criteria, dependencies, role, configured model, and effort.
+   Invalid plans retry once, then degrade to one general worker.
 2. **Create** — ledger entries on branch names `agent/task-NNN-slug`;
    dependents cannot dispatch until their parents MERGE.
-3. **Dispatch** — each ready task gets a worktree off primary's tip and a
-   background worker process.
+3. **Dispatch** — ready tasks get isolated worktrees and background sessions,
+   capped by `max_parallel_tasks` / `--max-workers`.
 4. **Work** — worker commits to its branch and ends its log with a
    fenced ```handoff``` block.
-5. **Reconcile** — exit code + parsed handoff → `REVIEWING`; failures get one
-   automatic retry, then give-up (`BLOCKED`).
+5. **Reconcile** — exit code + parsed handoff → `REVIEWING`; failures retry up
+   to `--max-retries`, then give-up (`BLOCKED`).
 6. **Gate** — `gate_commands` from config run inside the worktree.
-7. **Review** — reviewer LLM judges diff vs criteria + gate output →
-   `approve`, or `changes` with instructions.
+7. **Review** — reviewer LLM judges diff vs criteria + gate output. Malformed or
+   unavailable reviews retry and fail closed; a failed gate cannot be overridden.
 8. **Integrate** — approved: `--no-ff` merge into primary, worktree removed,
    dependents auto-unblock. Changes: same-branch re-dispatch within
    `--max-corrections`.
@@ -129,6 +131,7 @@ the changes-requested loop.
 | `worker_agent` | `orchestrator-worker` | default persona |
 | `worker_model` / `planner_model` / `reviewer_model` | `null` | model pins per role; unset = opencode default |
 | `fallback_models` | `[]` | ordered chain of backup models; on provider failure the next model is tried automatically |
+| `max_parallel_tasks` | `4` | maximum workers live at once; `--max-workers` overrides it |
 | `worker_timeout` | `3600` | seconds before a running worker is aborted |
 | `gate_commands` | `[]` | shell commands run in the worktree before review, e.g. `["poetry run pytest -q", "ruff check ."]` |
 | `gh_bin` | `"gh"` | GitHub CLI binary |
@@ -142,19 +145,20 @@ mechanical chores.
 
 ## Resilience & observability
 
-Errors are classified into provider-sided (auth, quota, rate limit,
-model-not-found, provider-unavailable) and hard failures (context overflow,
-bug in our code). Provider-sided errors trigger **automatic failover** through
-the `fallback_models` chain — the next available model is tried; everything
-else fails instantly with full diagnosis.
+Errors are classified into recoverable (auth, quota, rate limit,
+model-not-found, provider-unavailable, transient network) and hard failures
+(context overflow, content filters, bugs in our code). Recoverable errors trigger
+**automatic failover** through `fallback_models`; an unavailable task-selected
+model degrades to that chain and the server default.
 
-All decisions, model switches, and errors are written to
-`.orchestrator/logs/orchestrator.log` (DEBUG level). Run with `-v` / `--verbose`
+All decisions, model switches, HTTP/subprocess timing, state transitions, server output,
+and full error tracebacks are written to `.orchestrator/logs/orchestrator.log` (TRACE
+level, rotated at 10 MiB with five backups). Run with `-v` / `--verbose`
 for live stderr output including per-tool call status, failover switches, and
 session lifecycle events.
 
-The `worker_status` worker dict (from `task_status`) now includes `engine`,
-`session_id`, and `model_used` — the actual model that completed the work.
+The `worker_status` worker dict (from `task_status`) includes `session_id` and
+`model_used` — the actual model that completed the work.
 
 Workers use a shared `opencode serve` instance.
 
@@ -177,11 +181,12 @@ not an error.
 ## Observability
 
 - `oc-orchestrator status` / `report`
-- per-worker logs: `.orchestrator/logs/task-NNN.log`
+- per-worker logs: `.orchestrator/logs/task-NNN.log` (all retry/correction sessions appended)
 - dispatch registry: `.orchestrator/dispatches.json`
 
-Everything is restart-safe: if the orchestrator dies mid-flight, the next poll
-reconciles worker outcomes from process liveness plus log handoffs.
+Ledger and dispatch writes are atomic. A supervised run also cancels and marks
+unfinished work `BLOCKED` when its loop budget expires. A hard process kill may
+still require cancelling stale sessions before starting a new run.
 
 ## Architecture
 

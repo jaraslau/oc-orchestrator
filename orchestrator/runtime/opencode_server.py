@@ -85,6 +85,7 @@ class OpencodeServer:
         def read_output() -> None:
             assert process.stdout is not None
             for line in process.stdout:
+                log.debug("opencode: %s", line.rstrip())
                 self._output.put(line)
 
         self._reader = threading.Thread(
@@ -105,17 +106,20 @@ class OpencodeServer:
         process = self._process
         self._process = None
         if not process or process.poll() is not None:
+            log.debug("opencode server already stopped")
             return
         log.info("stopping opencode server")
         process.terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            log.warning("opencode server did not terminate in 5s; killing it")
             process.kill()
             process.wait(timeout=5)
         if self._reader is not None:
             self._reader.join(timeout=1)
             self._reader = None
+        log.info("opencode server stopped")
 
     def __enter__(self) -> OpencodeServer:
         self.start()
