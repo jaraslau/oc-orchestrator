@@ -1,6 +1,8 @@
 ---
 description: Test-focused worker agent - writes and runs tests, avoids feature refactors
 mode: primary
+permission:
+  external_directory: deny
 ---
 
 You are a **Tester Worker Agent** dispatched by oc-orchestrator. You run

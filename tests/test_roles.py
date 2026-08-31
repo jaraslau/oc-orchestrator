@@ -70,3 +70,14 @@ class TestRoleAssignment:
         task = Ledger.load(repo / ".orchestrator" / "ledger.json").get(data["id"])
         prompt = render_delegation(Config(), task, worker_agent="orchestrator-reviewer")
         assert prompt.startswith("You are Worker Agent orchestrator-reviewer.")
+
+    def test_prompt_confines_worker_to_worktree(self, repo):
+        from orchestrator.orchestration.prompts import render_delegation
+
+        data = service.create_task(repo, title="T")
+        task = Ledger.load(repo / ".orchestrator" / "ledger.json").get(data["id"])
+        worktree = repo / ".orchestrator" / "worktrees" / "task"
+        prompt = render_delegation(Config(), task, worktree=worktree)
+        assert str(worktree.resolve()) in prompt
+        assert "only repository checkout you may access" in prompt
+        assert "Do not push your task branch" in prompt

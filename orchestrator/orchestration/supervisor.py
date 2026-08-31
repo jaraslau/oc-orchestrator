@@ -455,6 +455,11 @@ def run_goal(
                 snap = snapshots[tid]
                 if snap["task"]["status"] != TaskStatus.PLANNED.value:
                     continue
+                if any(
+                    dep in snapshots and snapshots[dep]["task"]["status"] != TaskStatus.MERGED.value
+                    for dep in snap["task"]["dependencies"]
+                ):
+                    continue
                 try:
                     record = dispatch_task(root, tid)
                     model_note = f", model={record['model']}" if record.get("model") else ""

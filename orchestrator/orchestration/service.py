@@ -198,7 +198,11 @@ def dispatch_task(
     worktree, branch = ensure_worktree(root, config, task.id, task.title, task.branch)
     task.branch = branch
     prompt = render_delegation(
-        config, task, extra_instructions=instructions, worker_agent=agent_name
+        config,
+        task,
+        extra_instructions=instructions,
+        worker_agent=agent_name,
+        worktree=worktree,
     )
 
     dispatcher = get_dispatcher(root)
