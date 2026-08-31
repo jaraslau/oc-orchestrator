@@ -1,40 +1,46 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 from orchestrator.server import DEFAULT_SERVER_NAME, build_server, run_serve
 
 
 class FakeMCP:
-    instances = []
+    instances: list[FakeMCP] = []
 
-    def __init__(self, name):
-        self.name = name
-        self.tools = {}
-        self.ran = False
+    def __init__(self, name: str) -> None:
+        self.name: str = name
+        self.tools: dict[str, Callable[..., Any]] = {}
+        self.ran: bool = False
         FakeMCP.instances.append(self)
 
-    def tool(self):
-        def decorator(fn):
+    def tool(self, *args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             self.tools[fn.__name__] = fn
             return fn
 
         return decorator
 
-    def run(self):
+    def run(self) -> None:
         self.ran = True
 
 
 class TestServe:
-    def test_missing_mcp_package_returns_error(self, capsys):
-        def boom(_name):
+    def test_missing_mcp_package_returns_error(self, capsys: Any) -> None:
+        def boom(_name: str) -> FakeMCP:
             raise ImportError("No module named 'mcp'")
 
-        rc = run_serve(load_server=boom)
+        rc: int = run_serve(load_server=boom)
         assert rc == 1
         assert "mcp" in capsys.readouterr().err
 
-    def test_build_server_registers_tools(self, tmp_path):
+    def test_build_server_registers_tools(self, tmp_path: Path) -> None:
         fake = FakeMCP(DEFAULT_SERVER_NAME)
         built = build_server(lambda name: fake, root=tmp_path)
         assert built is fake
-        expected = {
+        expected: set[str] = {
             "create_task",
             "dispatch_task",
             "task_status",
@@ -44,29 +50,39 @@ class TestServe:
         }
         assert expected <= set(fake.tools)
 
-    def test_list_tasks_tool_roundtrip(self, tmp_path, monkeypatch):
+    def test_list_tasks_tool_roundtrip(self, tmp_path: Path, monkeypatch: Any) -> None:
         # init state manually via service, then call the MCP tool closure
         from orchestrator.orchestration import service
 
         service.create_task(tmp_path, title="Tool check")
         fake = FakeMCP(DEFAULT_SERVER_NAME)
         build_server(lambda name: fake, root=tmp_path)
-        rows = fake.tools["list_tasks"]()
+        rows: list[dict[str, Any]] = fake.tools["list_tasks"]()
         assert rows[0]["title"] == "Tool check"
 
-    def test_all_tools_delegate_to_service_no_shadowing(self, tmp_path, monkeypatch):
+    def test_all_tools_delegate_to_service_no_shadowing(  # noqa: E501
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
         # regression for TASK-003 incident: closures must call _service.*, not
         # themselves (create_task recursed into itself until fixed).
         from orchestrator.orchestration import service as service_module
 
-        calls = []
-        fakes = {
-            "create_task": lambda *a, **kw: calls.append("create_task") or {"id": "TASK-001"},
-            "dispatch_task": lambda *a, **kw: calls.append("dispatch_task") or {},
-            "task_status": lambda *a, **kw: calls.append("task_status") or {},
-            "list_tasks": lambda *a, **kw: calls.append("list_tasks") or [],
-            "get_task": lambda *a, **kw: calls.append("get_task") or {},
-            "cancel_task": lambda *a, **kw: calls.append("cancel_task") or {},
+        calls: list[str] = []
+
+        def make_tracked(name: str, ret: Any) -> Callable[..., Any]:
+            def _fn(*a: Any, **kw: Any) -> Any:
+                calls.append(name)
+                return ret
+
+            return _fn
+
+        fakes: dict[str, Callable[..., Any]] = {
+            "create_task": make_tracked("create_task", {"id": "TASK-001"}),
+            "dispatch_task": make_tracked("dispatch_task", {}),
+            "task_status": make_tracked("task_status", {}),
+            "list_tasks": make_tracked("list_tasks", []),
+            "get_task": make_tracked("get_task", {}),
+            "cancel_task": make_tracked("cancel_task", {}),
         }
         for name, fn in fakes.items():
             monkeypatch.setattr(service_module, name, fn, raising=False)
