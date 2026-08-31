@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 from orchestrator.core.config import Config, ledger_path, load_config
 from orchestrator.core.errors import DispatchBlocked
@@ -27,7 +28,7 @@ from orchestrator.runtime.worktrees import worktree_path
 
 Io = Callable[[str], None]
 GateRunner = Callable[[Path, Config], tuple[bool, str]]
-Reviewer = Callable[[dict, str, bool, str], tuple[str, str]]
+Reviewer = Callable[[dict[str, Any], str, bool, str], tuple[str, str]]
 
 log = get("supervisor")
 
@@ -81,12 +82,12 @@ Respond with ONLY a fenced JSON block, no other text:
 ```"""
 
 
-def extract_json_block(text: str) -> dict:
+def extract_json_block(text: str) -> dict[str, Any]:
     fenced_start = text.find("```")
     if fenced_start != -1:
         body = text[fenced_start:].split("```")[1]
         body = body.split("\n", 1)[1] if body.lstrip().lower().startswith("json") else body
-        return json.loads(body)
+        return cast(dict[str, Any], json.loads(body))
     depth = 0
     start = None
     for i, ch in enumerate(text):
@@ -97,7 +98,7 @@ def extract_json_block(text: str) -> dict:
         elif ch == "}":
             depth -= 1
             if depth == 0 and start is not None:
-                return json.loads(text[start : i + 1])
+                return cast(dict[str, Any], json.loads(text[start : i + 1]))
     raise PlanningError("no JSON object found in planner output")
 
 
@@ -285,7 +286,7 @@ Respond with a short explanation, then a FINAL LINE of strict JSON:
 {{"verdict": "approve"}} or {{"verdict": "changes", "instructions": "<what to fix>"}}"""
 
 
-def llm_review(task: dict, diff: str, gate_ok: bool, gate_output: str) -> tuple[str, str]:
+def llm_review(task: dict[str, Any], diff: str, gate_ok: bool, gate_output: str) -> tuple[str, str]:
     prompt = REVIEW_PROMPT.format(
         title=task["title"],
         objective=task["objective"] or "(none)",
@@ -623,7 +624,7 @@ def _give_up(root: Path, tid: str, note: str, io: Io) -> None:
     io(f"gave up on {tid}: {note[:120]}")
 
 
-def _finalize_merge(root: Path, config: Config, tid: str, t: dict, io: Io) -> bool:
+def _finalize_merge(root: Path, config: Config, tid: str, t: dict[str, Any], io: Io) -> bool:
     try:
         _merge_branch(root, t["branch"], f"{tid} {t['title']}")
     except Exception as exc:

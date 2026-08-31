@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from orchestrator.core.config import Config, ledger_path, load_config
 from orchestrator.core.errors import DispatchBlocked, InvalidState, TaskNotFound
@@ -17,7 +18,7 @@ from orchestrator.runtime.dispatcher import (
     wait_for_completion,
 )
 from orchestrator.runtime.events import EventTap
-from orchestrator.runtime.github import GhClient, pr_number_from_url
+from orchestrator.runtime.github import GhClient, Runner, pr_number_from_url
 from orchestrator.runtime.opencode_server import OpencodeServer
 from orchestrator.runtime.runner import SessionRunner
 from orchestrator.runtime.worktrees import branch_name, ensure_worktree, remove_worktree
@@ -121,7 +122,7 @@ def create_task(
     role: str | None = None,
     model: str | None = None,
     effort: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     config = load_config(root)
     ledger = Ledger.load(ledger_path(root))
     task = ledger.create_task(
@@ -159,13 +160,13 @@ def resolve_agent(root: Path, config: Config, explicit: str | None, task: Task) 
 
 
 @traced
-def list_tasks(root: Path, status: str | None = None) -> list[dict]:
+def list_tasks(root: Path, status: str | None = None) -> list[dict[str, Any]]:
     ledger = Ledger.load(ledger_path(root))
     return [t.to_dict() for t in ledger.filter(status=status)]
 
 
 @traced
-def get_task(root: Path, task_id: str) -> dict:
+def get_task(root: Path, task_id: str) -> dict[str, Any]:
     return _load_ledger(root).get(task_id).to_dict()
 
 
@@ -177,7 +178,7 @@ def dispatch_task(
     instructions: str | None = None,
     role: str | None = None,
     effort: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     root = Path(root)
     config = load_config(root)
     ledger = _load_ledger(root)
@@ -232,7 +233,7 @@ def dispatch_task(
 
 
 @traced
-def task_status(root: Path, task_id: str, timeout: float = 0.0) -> dict:
+def task_status(root: Path, task_id: str, timeout: float = 0.0) -> dict[str, Any]:
     """Return current task state, reconciling with the worker process first."""
     root = Path(root)
     ledger = _load_ledger(root)
@@ -251,7 +252,7 @@ def task_status(root: Path, task_id: str, timeout: float = 0.0) -> dict:
 
 
 @traced
-def cancel_task(root: Path, task_id: str) -> dict:
+def cancel_task(root: Path, task_id: str) -> dict[str, Any]:
     root = Path(root)
     ledger = _load_ledger(root)
     task = ledger.get(task_id)
@@ -333,7 +334,7 @@ def _reconcile(ledger: Ledger, task: Task, record: DispatchRecord) -> None:
     )
 
 
-def _record_dict(record: DispatchRecord | None) -> dict | None:
+def _record_dict(record: DispatchRecord | None) -> dict[str, Any] | None:
     return (
         None
         if record is None
@@ -354,7 +355,7 @@ def _record_dict(record: DispatchRecord | None) -> dict | None:
 _PR_ELIGIBLE = {TaskStatus.REVIEWING, TaskStatus.CHANGES_REQUESTED}
 
 
-def _client(root: Path, config: Config, gh_runner=None) -> GhClient:
+def _client(root: Path, config: Config, gh_runner: Runner | None = None) -> GhClient:
     return GhClient(root, gh_bin=config.gh_bin, runner=gh_runner)
 
 
@@ -379,8 +380,8 @@ def open_pr(
     task_id: str,
     title: str | None = None,
     body: str | None = None,
-    gh_runner=None,
-) -> dict:
+    gh_runner: Runner | None = None,
+) -> dict[str, Any]:
     root = Path(root)
     config = load_config(root)
     ledger = _load_ledger(root)
@@ -409,7 +410,9 @@ def open_pr(
 
 
 @traced
-def request_changes(root: Path, task_id: str, comment: str, gh_runner=None) -> dict:
+def request_changes(
+    root: Path, task_id: str, comment: str, gh_runner: Runner | None = None
+) -> dict[str, Any]:
     root = Path(root)
     config = load_config(root)
     ledger = _load_ledger(root)
@@ -433,7 +436,7 @@ def request_changes(root: Path, task_id: str, comment: str, gh_runner=None) -> d
 
 
 @traced
-def merge_task(root: Path, task_id: str, gh_runner=None) -> dict:
+def merge_task(root: Path, task_id: str, gh_runner: Runner | None = None) -> dict[str, Any]:
     root = Path(root)
     config = load_config(root)
     ledger = _load_ledger(root)
@@ -470,7 +473,7 @@ def merge_task(root: Path, task_id: str, gh_runner=None) -> dict:
 
 
 @traced
-def pr_diff(root: Path, task_id: str, gh_runner=None) -> str:
+def pr_diff(root: Path, task_id: str, gh_runner: Runner | None = None) -> str:
     root = Path(root)
     config = load_config(root)
     task = _load_ledger(root).get(task_id)
@@ -483,7 +486,7 @@ def pr_diff(root: Path, task_id: str, gh_runner=None) -> str:
 
 
 @traced
-def list_open_prs(root: Path, gh_runner=None) -> list[dict]:
+def list_open_prs(root: Path, gh_runner: Runner | None = None) -> list[dict[str, Any]]:
     root = Path(root)
     config = load_config(root)
     client = _client(root, config, gh_runner)
