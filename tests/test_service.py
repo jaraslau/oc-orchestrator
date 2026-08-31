@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -7,27 +10,35 @@ from orchestrator.core.config import load_config
 from orchestrator.core.errors import DispatchBlocked, InvalidState
 from orchestrator.core.ledger import Ledger, TaskStatus
 from orchestrator.orchestration import service
-from tests.conftest import HANDOFF_FAIL, HANDOFF_OK, configured, wait_until
+from tests.conftest import HANDOFF_FAIL as _HANDOFF_FAIL
+from tests.conftest import HANDOFF_OK as _HANDOFF_OK
+from tests.conftest import configured as _configured
+from tests.conftest import wait_until as _wait_until
+
+HANDOFF_FAIL: str = _HANDOFF_FAIL
+HANDOFF_OK: str = _HANDOFF_OK
+configured: Any = _configured
+wait_until: Any = _wait_until
 
 
-def make_task(repo, **kw):
+def make_task(repo: Path, **kw: Any) -> dict[str, Any]:
     return service.create_task(repo, title=kw.pop("title", "Do Thing"), **kw)
 
 
 class TestCreateTask:
-    def test_assigns_branch(self, repo):
+    def test_assigns_branch(self, repo: Path) -> None:
         data = make_task(repo, title="Auth API")
         assert data["id"] == "TASK-001"
         assert data["branch"] == "agent/task-001-auth-api"
 
-    def test_persisted(self, repo):
+    def test_persisted(self, repo: Path) -> None:
         make_task(repo)
         ledger = Ledger.load(repo / ".orchestrator" / "ledger.json")
         assert ledger.get("TASK-001").branch == "agent/task-001-do-thing"
 
 
 class TestDispatchLifecycle:
-    def test_success_flow(self, repo):
+    def test_success_flow(self, repo: Path) -> None:
         configured(repo)
         task = make_task(repo)
 
@@ -40,7 +51,7 @@ class TestDispatchLifecycle:
         assert final["worker"]["exit_code"] == 0
         assert final["task"]["handoff"]["SUMMARY"] == "did the thing"
 
-    def test_failure_exit_code(self, repo):
+    def test_failure_exit_code(self, repo: Path) -> None:
         configured(repo, RuntimeError("boom"))
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
@@ -49,7 +60,7 @@ class TestDispatchLifecycle:
         assert final["task"]["status"] == "FAILED"
         assert "exited 1" in final["task"]["last_result"]
 
-    def test_handoff_failed_status_wins_on_zero_exit(self, repo):
+    def test_handoff_failed_status_wins_on_zero_exit(self, repo: Path) -> None:
         configured(repo, HANDOFF_FAIL)
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
@@ -57,7 +68,7 @@ class TestDispatchLifecycle:
         final = service.task_status(repo, task["id"], timeout=10.0)
         assert final["task"]["status"] == "FAILED"
 
-    def test_zero_exit_without_handoff(self, repo):
+    def test_zero_exit_without_handoff(self, repo: Path) -> None:
         configured(repo, "done")
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
@@ -66,9 +77,14 @@ class TestDispatchLifecycle:
         assert final["task"]["status"] == "REVIEWING"
         assert "no handoff block" in final["task"]["last_result"]
 
-    def test_working_transition_observed(self, repo):
+    def test_working_transition_observed(self, repo: Path) -> None:
         gate = threading.Event()
-        configured(repo, lambda prompt, cwd: (gate.wait(timeout=2), HANDOFF_OK)[1])
+
+        def handler(prompt: str, cwd: Path) -> str:
+            gate.wait(timeout=2)
+            return HANDOFF_OK
+
+        configured(repo, handler)
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
 
@@ -83,7 +99,7 @@ class TestDispatchLifecycle:
 
 
 class TestDispatchGuards:
-    def test_unmet_dependency_blocks(self, repo):
+    def test_unmet_dependency_blocks(self, repo: Path) -> None:
         configured(repo)
         a = make_task(repo, title="Base")
         b = service.create_task(repo, title="Dependent", dependencies=[a["id"]])
@@ -98,7 +114,7 @@ class TestDispatchGuards:
         assert result["task"]["status"] == "DISPATCHED"
         service.task_status(repo, b["id"], timeout=1)
 
-    def test_terminal_task_cannot_dispatch(self, repo):
+    def test_terminal_task_cannot_dispatch(self, repo: Path) -> None:
         configured(repo)
         task = make_task(repo)
         ledger = Ledger.load(repo / ".orchestrator" / "ledger.json")
@@ -107,7 +123,7 @@ class TestDispatchGuards:
         with pytest.raises(InvalidState):
             service.dispatch_task(repo, task["id"])
 
-    def test_redispatch_after_failure_reuses_branch(self, repo):
+    def test_redispatch_after_failure_reuses_branch(self, repo: Path) -> None:
         configured(repo, RuntimeError("failed"))
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
@@ -121,9 +137,14 @@ class TestDispatchGuards:
         assert "worker failed: RuntimeError: failed" in history
         assert "STATUS: DONE" in history
 
-    def test_cancel_terminates_worker(self, repo):
+    def test_cancel_terminates_worker(self, repo: Path) -> None:
         gate = threading.Event()
-        configured(repo, lambda prompt, cwd: (gate.wait(timeout=2), HANDOFF_OK)[1])
+
+        def handler(prompt: str, cwd: Path) -> str:
+            gate.wait(timeout=2)
+            return HANDOFF_OK
+
+        configured(repo, handler)
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
         cancelled = service.cancel_task(repo, task["id"])
@@ -133,7 +154,7 @@ class TestDispatchGuards:
 
 
 class TestCleanup:
-    def test_cleanup_worktree(self, repo):
+    def test_cleanup_worktree(self, repo: Path) -> None:
         configured(repo)
         task = make_task(repo)
         service.dispatch_task(repo, task["id"])
@@ -143,6 +164,6 @@ class TestCleanup:
         assert service.cleanup_worktree(repo, task["id"]) is True
         assert not wt.exists()
 
-    def test_config_roundtrip_has_opencode_bin(self, repo):
+    def test_config_roundtrip_has_opencode_bin(self, repo: Path) -> None:
         configured(repo)
         assert load_config(repo).opencode_bin.endswith("opencode")
