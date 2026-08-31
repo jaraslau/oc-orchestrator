@@ -16,6 +16,15 @@ from orchestrator.logs import get
 
 log = get("resilience")
 
+__all__ = [
+    "OrchestratorError",
+    "ErrorKind",
+    "PROVIDER_SIDED",
+    "ModelChain",
+    "classify",
+    "parse_model_ref",
+]
+
 
 class ErrorKind(StrEnum):
     PROVIDER_AUTH = "provider_auth"

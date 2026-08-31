@@ -11,6 +11,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from orchestrator.core.errors import GhError
 from orchestrator.logs import get
@@ -115,7 +116,7 @@ class GhClient:
         self._run("pr", "merge", str(number), f"--{method}", "--delete-branch")
 
 
-def _json_array(text: str) -> list:
+def _json_array(text: str) -> list[Any]:
     import json
 
     value = json.loads(text)
