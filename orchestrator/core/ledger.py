@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from orchestrator.core.storage import read_json, write_json_atomic
 from orchestrator.logs import get
@@ -51,7 +52,7 @@ class Task:
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["status"] = self.status.value
         return data
