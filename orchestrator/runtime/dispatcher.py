@@ -8,7 +8,7 @@ import traceback
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from orchestrator.core.config import Config, state_dir
 from orchestrator.core.storage import read_json, write_json_atomic
@@ -71,7 +71,7 @@ class Dispatcher:
             if not self.registry_path.exists():
                 return {}
             data = read_json(self.registry_path)
-            return data.get("dispatches", {})
+            return cast(dict[str, dict[str, Any]], data.get("dispatches", {}))
 
     def _save_registry(self, dispatches: dict[str, dict[str, Any]]) -> None:
         with self._registry_lock:
