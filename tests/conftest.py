@@ -1,4 +1,6 @@
 import subprocess
+from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +12,7 @@ from orchestrator.runtime.dispatcher import Dispatcher
 
 
 @pytest.fixture()
-def repo(tmp_path):
+def repo(tmp_path: Path) -> Path:
     """A scratch git repo with one commit on main."""
     r = tmp_path / "repo"
     r.mkdir()
@@ -47,15 +49,26 @@ SUMMARY: could not do the thing
 ```"""
 
 
+Behavior = str | Exception | Callable[[str, Path], str]
+
+
 class FakeRunner:
-    def __init__(self, behavior=HANDOFF_OK):
+    def __init__(self, behavior: Behavior = HANDOFF_OK) -> None:
         self.behavior = behavior
-        self.calls = []
-        self.aborted = []
+        self.calls: list[dict[str, object]] = []
+        self.aborted: list[str] = []
 
     def run(
-        self, prompt, cwd, *, agent=None, model=None, variant=None, timeout=None, on_session=None
-    ):
+        self,
+        prompt: str,
+        cwd: Path,
+        *,
+        agent: str | None = None,
+        model: str | None = None,
+        variant: str | None = None,
+        timeout: float | None = None,
+        on_session: Callable[[SessionHandle], None] | None = None,
+    ) -> SimpleNamespace:
         self.calls.append(
             {"prompt": prompt, "cwd": cwd, "agent": agent, "model": model, "variant": variant}
         )
@@ -71,11 +84,11 @@ class FakeRunner:
             models_tried=[model or "m/default"],
         )
 
-    def abort_session(self, handle):
+    def abort_session(self, handle: SessionHandle) -> None:
         self.aborted.append(handle.session_id)
 
 
-def configured(repo, behavior=HANDOFF_OK) -> FakeRunner:
+def configured(repo: Path, behavior: Behavior = HANDOFF_OK) -> FakeRunner:
     config = Config()
     save_config(repo, config)
     runner = FakeRunner(behavior)
@@ -83,7 +96,7 @@ def configured(repo, behavior=HANDOFF_OK) -> FakeRunner:
     return runner
 
 
-def wait_until(fn, timeout: float = 8.0, interval: float = 0.05):
+def wait_until[T](fn: Callable[[], T], timeout: float = 8.0, interval: float = 0.05) -> T:
     import time
 
     deadline = time.monotonic() + timeout

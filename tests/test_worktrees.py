@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from orchestrator.core.config import Config
@@ -13,18 +15,18 @@ from orchestrator.runtime.worktrees import (
 
 
 class TestSlugify:
-    def test_basic(self):
+    def test_basic(self) -> None:
         assert slugify("Add Auth API!") == "add-auth-api"
 
-    def test_truncates(self):
+    def test_truncates(self) -> None:
         assert len(slugify("a" * 100)) <= 32
 
-    def test_empty_falls_back(self):
+    def test_empty_falls_back(self) -> None:
         assert slugify("!!!") == "task"
 
 
 class TestBranchName:
-    def test_format(self):
+    def test_format(self) -> None:
         config = Config()
         assert branch_name(config, "TASK-007", "Implement Login") == (
             "agent/task-007-implement-login"
@@ -32,15 +34,15 @@ class TestBranchName:
 
 
 class TestWorktrees:
-    def test_resolve_base_local(self, repo):
+    def test_resolve_base_local(self, repo: Path) -> None:
         assert resolve_base(repo, Config()) == "main"
 
-    def test_resolve_base_missing_raises(self, tmp_path):
+    def test_resolve_base_missing_raises(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()  # bare-ish fake; no commits
         with pytest.raises(WorktreeError, match="no base branch"):
             resolve_base(tmp_path, Config())
 
-    def test_ensure_creates_branch_and_dir(self, repo):
+    def test_ensure_creates_branch_and_dir(self, repo: Path) -> None:
         config = Config()
         path, branch = ensure_worktree(repo, config, "TASK-001", "Do Thing")
         assert path.is_dir()
@@ -48,7 +50,7 @@ class TestWorktrees:
         assert branch_exists(repo, branch)
         remove_worktree(repo, config, branch)
 
-    def test_reuse_existing_branch(self, repo):
+    def test_reuse_existing_branch(self, repo: Path) -> None:
         config = Config()
         _, branch = ensure_worktree(repo, config, "TASK-001", "Do Thing")
         # simulate a commit on the task branch, then re-dispatch
@@ -77,5 +79,5 @@ class TestWorktrees:
         assert branch_exists(repo, branch)  # same branch reused, not recreated from base
         remove_worktree(repo, config, branch)
 
-    def test_remove_missing_is_noop(self, repo):
+    def test_remove_missing_is_noop(self, repo: Path) -> None:
         assert remove_worktree(repo, Config(), "agent/task-999-nope") is False

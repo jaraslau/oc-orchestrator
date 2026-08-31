@@ -31,11 +31,11 @@ from orchestrator.runtime.resilience import (
         ("", ErrorKind.UNKNOWN),
     ],
 )
-def test_classify(text, expected):
+def test_classify(text: str, expected: ErrorKind) -> None:
     assert classify(text) is expected
 
 
-def test_provider_sided_membership():
+def test_provider_sided_membership() -> None:
     assert ErrorKind.PROVIDER_AUTH in PROVIDER_SIDED
     assert ErrorKind.RATE_LIMITED in PROVIDER_SIDED
     assert ErrorKind.CONTEXT_OVERFLOW not in PROVIDER_SIDED
@@ -43,15 +43,15 @@ def test_provider_sided_membership():
 
 
 class TestModelChain:
-    def test_build_dedupes_and_defaults(self):
+    def test_build_dedupes_and_defaults(self) -> None:
         chain = ModelChain.build(None, ["a", "b"], "dflt")
         assert chain.models == ["dflt", "a", "b"]
 
-    def test_build_primary_first_no_duplicates(self):
+    def test_build_primary_first_no_duplicates(self) -> None:
         chain = ModelChain.build("a", ["a", "b"], "d")
         assert chain.models == ["a", "b", "d"]
 
-    def test_advance_walks_chain_then_none(self):
+    def test_advance_walks_chain_then_none(self) -> None:
         chain = ModelChain.build("a", ["b", "c"], "z")
         assert chain.current == "a"
         assert chain.advance("auth") == "b"
@@ -61,23 +61,26 @@ class TestModelChain:
         assert chain.exhausted
 
 
-PROVIDERS = {"anthropic": ["claude-sonnet-4-6", "claude-haiku-4"], "opencode": ["big-pickle"]}
+PROVIDERS: dict[str, list[str]] = {
+    "anthropic": ["claude-sonnet-4-6", "claude-haiku-4"],
+    "opencode": ["big-pickle"],
+}
 
 
 class TestParseModelRef:
-    def test_explicit_provider(self):
+    def test_explicit_provider(self) -> None:
         assert parse_model_ref("anthropic/claude-haiku-4", PROVIDERS, "opencode") == (
             "anthropic",
             "claude-haiku-4",
         )
 
-    def test_bare_uses_default_provider(self):
+    def test_bare_uses_default_provider(self) -> None:
         assert parse_model_ref("big-pickle", PROVIDERS, "opencode") == ("opencode", "big-pickle")
 
-    def test_unknown_model_raises(self):
+    def test_unknown_model_raises(self) -> None:
         with pytest.raises(OrchestratorError, match="not offered"):
             parse_model_ref("anthropic/nonexistent", PROVIDERS, "opencode")
 
-    def test_unknown_provider_raises(self):
+    def test_unknown_provider_raises(self) -> None:
         with pytest.raises(OrchestratorError, match="available: none|available"):
             parse_model_ref("ghost/model", PROVIDERS, "opencode")

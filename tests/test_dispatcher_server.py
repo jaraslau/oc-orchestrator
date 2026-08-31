@@ -1,57 +1,60 @@
 import threading
-import time
 from dataclasses import replace
 from pathlib import Path
 
-from orchestrator.runtime.dispatcher import Dispatcher
-from tests.conftest import FakeRunner
+from orchestrator.core.config import Config
+from orchestrator.runtime.dispatcher import Dispatcher, DispatchRecord
+from tests.conftest import FakeRunner, wait_until
 
 
-def wait_until(fn, timeout: float = 5.0, interval: float = 0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        value = fn()
-        if value:
-            return value
-        time.sleep(interval)
-    return fn()
-
-
-def spawn(dispatcher, tmp_path, **kwargs):
+def spawn(
+    dispatcher: Dispatcher,
+    tmp_path: Path,
+    *,
+    model: str | None = None,
+    agent_name: str | None = None,
+    variant: str | None = None,
+) -> DispatchRecord:
     worktree = tmp_path / "wt-fake"
     worktree.mkdir(exist_ok=True)
     return dispatcher.spawn(
-        config=type(
-            "C", (), {"logs_dirname": "logs", "worker_agent": "w", "worker_timeout": 10.0}
-        )(),
+        config=Config(logs_dirname="logs", worker_agent="w", worker_timeout=10.0),
         task_id="TASK-900",
         branch="agent/task-900",
         worktree=worktree,
         prompt="do things",
-        **kwargs,
+        model=model,
+        agent_name=agent_name,
+        variant=variant,
     )
 
 
-def test_spawn_runs_and_finalizes_success(repo, tmp_path):
+def test_spawn_runs_and_finalizes_success(repo: Path, tmp_path: Path) -> None:
     runner = FakeRunner()
     dispatcher = Dispatcher(repo, runner)
     spawn(dispatcher, tmp_path)
-    assert wait_until(lambda: dispatcher.poll("TASK-900").exit_code == 0)
+    assert wait_until(
+        lambda: (record := dispatcher.poll("TASK-900")) is not None and record.exit_code == 0
+    )
     final = dispatcher.poll("TASK-900")
+    assert final is not None
     assert final.session_id == "ses_1"
     assert final.model_used == "m/default"
     assert "STATUS: DONE" in Path(final.log_path).read_text()
 
 
-def test_failure_recorded_with_diagnosis(repo, tmp_path):
+def test_failure_recorded_with_diagnosis(repo: Path, tmp_path: Path) -> None:
     dispatcher = Dispatcher(repo, FakeRunner(RuntimeError("502 bad gateway from provider")))
     spawn(dispatcher, tmp_path)
-    assert wait_until(lambda: dispatcher.poll("TASK-900").exit_code == 1)
+    assert wait_until(
+        lambda: (record := dispatcher.poll("TASK-900")) is not None and record.exit_code == 1
+    )
     final = dispatcher.poll("TASK-900")
+    assert final is not None
     assert "502 bad gateway" in Path(final.log_path).read_text()
 
 
-def test_agent_model_variant_forwarded(repo, tmp_path):
+def test_agent_model_variant_forwarded(repo: Path, tmp_path: Path) -> None:
     runner = FakeRunner()
     dispatcher = Dispatcher(repo, runner)
     spawn(
@@ -67,7 +70,7 @@ def test_agent_model_variant_forwarded(repo, tmp_path):
     assert runner.calls[0]["variant"] == "high"
 
 
-def test_terminate_aborts_live_session(repo, tmp_path):
+def test_terminate_aborts_live_session(repo: Path, tmp_path: Path) -> None:
     gate = threading.Event()
     runner = FakeRunner(lambda prompt, cwd: (gate.wait(timeout=5), "late")[1])
     dispatcher = Dispatcher(repo, runner)
@@ -78,11 +81,11 @@ def test_terminate_aborts_live_session(repo, tmp_path):
     gate.set()
 
 
-def test_poll_returns_none_for_unknown_task(repo):
+def test_poll_returns_none_for_unknown_task(repo: Path) -> None:
     assert Dispatcher(repo, FakeRunner()).poll("NOPE") is None
 
 
-def test_concurrent_registry_updates_preserve_every_task(repo, tmp_path):
+def test_concurrent_registry_updates_preserve_every_task(repo: Path, tmp_path: Path) -> None:
     dispatcher = Dispatcher(repo, FakeRunner())
     template = spawn(dispatcher, tmp_path)
     records = [replace(template, task_id=f"TASK-{i:03d}") for i in range(20)]
