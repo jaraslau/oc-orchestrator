@@ -67,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--max-workers", type=int, default=None, help="override concurrent worker limit"
     )
+    p_run.add_argument(
+        "--pr",
+        action="store_true",
+        help="push task branches and integrate them through GitHub pull requests",
+    )
     p_run.add_argument("--push", action="store_true", help="push primary branch after merges")
 
     return parser
@@ -207,6 +212,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         max_corrections=args.max_corrections,
         max_retries=args.max_retries,
         max_workers=args.max_workers,
+        pr_mode=args.pr,
         push=args.push,
         io=print,
     )

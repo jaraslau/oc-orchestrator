@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from orchestrator.cli import MANAGER_AGENT_FILENAME, WORKER_AGENT_FILENAME, main
+from orchestrator.cli import MANAGER_AGENT_FILENAME, WORKER_AGENT_FILENAME, build_parser, main
 from orchestrator.core.ledger import TaskStatus
 
 
@@ -18,6 +18,11 @@ def repo(tmp_path: Path) -> Path:
 
 def run(argv: list[str]) -> int:
     return main(argv)
+
+
+def test_run_pr_flag() -> None:
+    args = build_parser().parse_args(["run", "ship it", "--pr"])
+    assert args.pr is True
 
 
 class TestInit:

@@ -59,7 +59,7 @@ Exit code is `0` only when **every** task merged.
 ```sh
 oc-orchestrator run "<goal>" [--path REPO] [--dry-run]
     [--max-workers N] [--max-loops N] [--max-retries N]
-    [--max-corrections N] [--push]
+    [--max-corrections N] [--pr] [--push]
 ```
 
 Pipeline:
@@ -78,9 +78,10 @@ Pipeline:
 6. **Gate** — `gate_commands` from config run inside the worktree.
 7. **Review** — reviewer LLM judges diff vs criteria + gate output. Malformed or
    unavailable reviews retry and fail closed; a failed gate cannot be overridden.
-8. **Integrate** — approved: `--no-ff` merge into primary, worktree removed,
-   dependents auto-unblock. Changes: same-branch re-dispatch within
-   `--max-corrections`.
+8. **Integrate** — approved: local `--no-ff` merge by default, or `--pr` pushes
+   the task branch and uses `gh` to create/reuse and merge a PR. Worktrees are
+   removed and dependents auto-unblock. Changes update the same PR branch and
+   receive a PR comment before re-dispatch, within `--max-corrections`.
 9. **Report** — completion summary; `--push` optionally publishes primary.
 
 The LLM touches exactly two decision points (plan, review verdict); sequencing,
@@ -216,8 +217,8 @@ Worker isolation model: one branch + one worktree per task under
 
 - Workers burn real tokens; expect minutes per task.
 - `.opencode/agent/*` must be committed or dispatch breaks in fresh worktrees.
-- Without `gh auth login`, PR tools are unavailable; the supervisor merges
-  locally instead.
+- `--pr` requires `gh auth login` plus a clean primary branch synchronized with
+  `origin`; it fails closed instead of falling back to a local merge.
 - Gates are only as good as `gate_commands` — set them for real repos.
 - One ledger per repo; don't run two supervisors against the same root.
 
