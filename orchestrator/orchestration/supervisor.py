@@ -21,9 +21,13 @@ from orchestrator.orchestration.service import (
     create_task,
     dispatch_task,
     generate_report,
+    merge_task,
+    open_pr,
+    request_changes,
     shutdown_runtime,
     task_status,
 )
+from orchestrator.runtime.github import GhClient
 from orchestrator.runtime.worktrees import worktree_path
 
 Io = Callable[[str], None]
@@ -355,6 +359,7 @@ def run_goal(
     max_corrections: int = 2,
     max_retries: int = 1,
     max_workers: int | None = None,
+    pr_mode: bool = False,
     push: bool = False,
     poll_seconds: float = 10.0,
     planner: Callable[[Path, Config, str], list[PlannedTask]] = plan_tasks,
@@ -371,12 +376,13 @@ def run_goal(
     if max_loops < 1 or worker_limit < 1 or max_corrections < 0 or max_retries < 0:
         raise ValueError("loop/worker limits must be positive and retry budgets non-negative")
     log.info(
-        "run_goal start: goal=%r workers=%d loops=%d corrections=%d retries=%d",
+        "run_goal start: goal=%r workers=%d loops=%d corrections=%d retries=%d pr=%s",
         goal[:80],
         worker_limit,
         max_loops,
         max_corrections,
         max_retries,
+        pr_mode,
     )
 
     def emit(message: str) -> None:
@@ -412,6 +418,10 @@ def run_goal(
                 emit(f"  {i}. {p.title}{deps} [{assignment}]")
             emit(f"dry-run: {len(plans)} tasks planned, nothing created")
             return 0
+
+        if pr_mode:
+            _preflight_pr_mode(root, config)
+            emit("PR mode ready: gh authenticated; primary branch clean and synchronized")
 
         ids = create_planned_tasks(root, plans)
         emit(f"created: {', '.join(ids)}")
@@ -490,7 +500,7 @@ def run_goal(
                         worker.get("session_id"),
                     )
 
-                if status == "REVIEWING":
+                if status in ("REVIEWING", "PR_OPEN"):
                     progressed = True
                     worktree = worktree_path(root, config, t["branch"])
                     if not worktree.exists():
@@ -500,6 +510,15 @@ def run_goal(
                     if tid in pending_corrections:
                         send_correction(tid, pending_corrections[tid], loop)
                         continue
+                    if pr_mode and status == "REVIEWING":
+                        try:
+                            _push_task_branch(root, t["branch"])
+                            opened = open_pr(root, tid)
+                            emit(f"[{loop}] PR ready for {tid}: {opened['pr']['url']}")
+                        except Exception as exc:
+                            log.exception("PR preparation failed: task=%s", tid)
+                            _give_up(root, tid, f"PR preparation failed: {exc}", emit)
+                            continue
                     try:
                         ok, gate_out = gate(worktree, config)
                     except Exception as exc:
@@ -533,9 +552,20 @@ def run_goal(
                     log.info("review result: task=%s verdict=%s", tid, verdict)
 
                     if verdict == "approve":
-                        _finalize_merge(root, config, tid, t, emit)
+                        if pr_mode:
+                            _finalize_pr_merge(root, config, tid, t, emit)
+                        else:
+                            _finalize_merge(root, config, tid, t, emit)
                     else:
-                        send_correction(tid, instructions or gate_out[-1500:], loop)
+                        correction = instructions or gate_out[-1500:]
+                        if pr_mode:
+                            try:
+                                request_changes(root, tid, correction)
+                            except Exception as exc:
+                                log.exception("PR change request failed: task=%s", tid)
+                                _give_up(root, tid, f"PR change request failed: {exc}", emit)
+                                continue
+                        send_correction(tid, correction, loop)
 
                 elif status in ("FAILED", "BLOCKED"):
                     progressed = True
@@ -576,7 +606,7 @@ def run_goal(
             if task.id in ids
         )
         push_failed = False
-        if push and merged:
+        if push and merged and not pr_mode:
             proc = subprocess.run(
                 ["git", "push", "origin", config.primary_branch],
                 cwd=str(root),
@@ -627,6 +657,49 @@ def _give_up(root: Path, tid: str, note: str, io: Io) -> None:
     except Exception:
         log.exception("worktree cleanup failed after giving up on %s", tid)
     io(f"gave up on {tid}: {note[:120]}")
+
+
+def _git(root: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=str(root), capture_output=True, text=True, check=False
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise RuntimeError(f"git {' '.join(args[:2])} failed: {detail}")
+    return proc.stdout.strip()
+
+
+def _preflight_pr_mode(root: Path, config: Config) -> None:
+    GhClient(root, gh_bin=config.gh_bin).check()
+    if _git(root, "branch", "--show-current") != config.primary_branch:
+        raise RuntimeError(f"PR mode must start on {config.primary_branch}")
+    if _git(root, "status", "--porcelain"):
+        raise RuntimeError("PR mode requires a clean working tree")
+    _git(root, "fetch", "origin", config.primary_branch)
+    local = _git(root, "rev-parse", config.primary_branch)
+    remote = _git(root, "rev-parse", f"origin/{config.primary_branch}")
+    if local != remote:
+        raise RuntimeError(
+            f"PR mode requires {config.primary_branch} to match origin/{config.primary_branch}"
+        )
+
+
+def _push_task_branch(root: Path, branch: str) -> None:
+    _git(root, "push", "--set-upstream", "origin", branch)
+
+
+def _finalize_pr_merge(root: Path, config: Config, tid: str, t: dict[str, Any], io: Io) -> bool:
+    try:
+        merge_task(root, tid)
+    except Exception as exc:
+        _give_up(root, tid, f"PR merge failed: {exc}", io)
+        return False
+    try:
+        _git(root, "pull", "--ff-only", "origin", config.primary_branch)
+    except Exception as exc:
+        raise RuntimeError(f"{tid} merged remotely but local primary sync failed: {exc}") from exc
+    io(f"merged {tid} via PR ({t['title']})")
+    return True
 
 
 def _finalize_merge(root: Path, config: Config, tid: str, t: dict[str, Any], io: Io) -> bool:

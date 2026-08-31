@@ -154,6 +154,51 @@ def _approve_all() -> Callable[[dict[str, Any], str, bool, str], tuple[str, str]
 
 
 class TestRunGoal:
+    def test_pr_mode_routes_approved_task_through_pr(
+        self, fast_factory: Path, monkeypatch: Any
+    ) -> None:
+        calls: list[str] = []
+
+        monkeypatch.setattr(
+            "orchestrator.orchestration.supervisor._preflight_pr_mode",
+            lambda root, config: calls.append("preflight"),
+        )
+        monkeypatch.setattr(
+            "orchestrator.orchestration.supervisor._push_task_branch",
+            lambda root, branch: calls.append("push"),
+        )
+
+        def fake_open(root: Path, tid: str) -> dict[str, Any]:
+            calls.append("open")
+            return {"pr": {"url": "https://github.com/acme/repo/pull/1"}}
+
+        def fake_merge(
+            root: Path, config: Config, tid: str, task: dict[str, Any], io: Callable[[str], None]
+        ) -> bool:
+            calls.append("merge")
+            ledger = Ledger.load(ledger_path(root))
+            ledger.update_status(tid, TaskStatus.MERGED)
+            ledger.save()
+            return True
+
+        monkeypatch.setattr("orchestrator.orchestration.supervisor.open_pr", fake_open)
+        monkeypatch.setattr("orchestrator.orchestration.supervisor._finalize_pr_merge", fake_merge)
+
+        rc = run_goal(
+            fast_factory,
+            "goal",
+            pr_mode=True,
+            max_loops=20,
+            poll_seconds=0.01,
+            planner=lambda root, config, goal: [PlannedTask(title="Via PR")],
+            gate_runner=lambda wt, cfg: (True, "ok"),
+            reviewer=_approve_all(),
+            io=lambda message: None,
+        )
+
+        assert rc == 0
+        assert calls == ["preflight", "push", "open", "merge"]
+
     def test_happy_path_two_independent_tasks(self, fast_factory: Path) -> None:
         plans: list[PlannedTask] = [
             PlannedTask(title="Add foo", objective="implement foo"),
@@ -248,6 +293,7 @@ class TestRunGoal:
             repo,
             "just looking",
             dry_run=True,
+            pr_mode=True,
             planner=lambda root, config, goal: [PlannedTask(title="X")],
             io=lambda s: None,
         )
