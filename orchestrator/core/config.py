@@ -30,6 +30,7 @@ class Config:
     opencode_bin: str = "opencode"
     server_port: int = 0
     gh_bin: str = "gh"
+    git_remote: str = "origin"
     merge_method: str = "squash"
 
 

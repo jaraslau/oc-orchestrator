@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from orchestrator.core.errors import DispatchBlocked, GhError, InvalidState
+from orchestrator.core.errors import DispatchBlocked, GhChecksFailed, GhError, InvalidState
 from orchestrator.core.ledger import Ledger, TaskStatus
 from orchestrator.orchestration import service
 from orchestrator.runtime.github import GhClient, pr_number_from_url
@@ -110,6 +110,25 @@ class TestGhClient:
         GhClient(Path("."), runner=runner).merge(5, method="squash")
         assert "--squash" in seen[0]
 
+    def test_checks_report_pending_and_failure(self) -> None:
+        responses = iter(
+            [
+                (8, '[{"name":"ci","bucket":"pending"}]', ""),
+                (1, '[{"name":"ci","bucket":"fail"}]', ""),
+            ]
+        )
+        runner, _ = make_runner(lambda args: next(responses))
+        client = GhClient(Path("."), runner=runner)
+
+        assert client.checks_ready(5) is False
+        with pytest.raises(GhChecksFailed, match="ci"):
+            client.checks_ready(5)
+
+    def test_close_deletes_remote_branch(self) -> None:
+        runner, calls = make_runner(gh_ok)
+        GhClient(Path("."), runner=runner).close(5, "giving up")
+        assert calls == [["pr", "close", "5", "--comment", "giving up", "--delete-branch"]]
+
     def test_comment_passes_body(self) -> None:
         seen: list[list[str]] = []
 
@@ -203,18 +222,88 @@ class TestPrLifecycle:
         wt.mkdir(parents=True)
 
         merges: list[list[str]] = []
+        remote_state = "OPEN"
 
         def handler(args: list[str]) -> tuple[int, str, str]:
+            nonlocal remote_state
+            if args[:2] == ["pr", "view"]:
+                return 0, remote_state, ""
+            if args[:2] == ["pr", "checks"]:
+                return 0, "[]", ""
             if args[:2] == ["pr", "merge"]:
                 merges.append(args)
+                remote_state = "MERGED"
                 return 0, "", ""
             return 0, "", ""
 
         runner, _ = make_runner(handler)
-        merged: dict[str, Any] = service.merge_task(repo, task["id"], gh_runner=runner)
+        merged: dict[str, Any] = service.merge_task(
+            repo, task["id"], gh_runner=runner, after_merge=lambda: None
+        )
         assert merged["status"] == "MERGED"
         assert merges and "--squash" in merges[0]
         assert not wt.exists()
+
+    def test_merge_waits_for_checks_without_changing_local_state(self, repo: Path) -> None:
+        task: dict[str, Any] = reviewing_task(repo)
+        ledger_path = repo / ".orchestrator" / "ledger.json"
+        ledger = Ledger.load(ledger_path)
+        current = ledger.get(task["id"])
+        current.pr = "https://github.com/acme/repo/pull/7"
+        ledger.save()
+        callback_called = False
+
+        def handler(args: list[str]) -> tuple[int, str, str]:
+            if args[:2] == ["pr", "view"]:
+                return 0, "OPEN", ""
+            if args[:2] == ["pr", "checks"]:
+                return 8, '[{"name":"ci","bucket":"pending"}]', ""
+            raise AssertionError(f"unexpected gh call: {args}")
+
+        def callback() -> None:
+            nonlocal callback_called
+            callback_called = True
+
+        runner, _ = make_runner(handler)
+        with pytest.raises(DispatchBlocked, match="waiting for GitHub checks"):
+            service.merge_task(repo, task["id"], gh_runner=runner, after_merge=callback)
+
+        assert not callback_called
+        assert Ledger.load(ledger_path).get(task["id"]).status == TaskStatus.REVIEWING
+
+    def test_sync_failure_is_reconciled_after_remote_merge(self, repo: Path) -> None:
+        task: dict[str, Any] = reviewing_task(repo)
+        ledger_path = repo / ".orchestrator" / "ledger.json"
+        ledger = Ledger.load(ledger_path)
+        current = ledger.get(task["id"])
+        current.pr = "https://github.com/acme/repo/pull/7"
+        ledger.save()
+        remote_state = "OPEN"
+
+        def handler(args: list[str]) -> tuple[int, str, str]:
+            nonlocal remote_state
+            if args[:2] == ["pr", "view"]:
+                return 0, remote_state, ""
+            if args[:2] == ["pr", "checks"]:
+                return 0, "[]", ""
+            if args[:2] == ["pr", "merge"]:
+                remote_state = "MERGED"
+                return 0, "", ""
+            raise AssertionError(f"unexpected gh call: {args}")
+
+        runner, calls = make_runner(handler)
+        with pytest.raises(RuntimeError, match="sync failed"):
+            service.merge_task(
+                repo,
+                task["id"],
+                gh_runner=runner,
+                after_merge=lambda: (_ for _ in ()).throw(RuntimeError("sync failed")),
+            )
+        assert Ledger.load(ledger_path).get(task["id"]).status == TaskStatus.REVIEWING
+
+        merged = service.merge_task(repo, task["id"], gh_runner=runner, after_merge=lambda: None)
+        assert merged["status"] == "MERGED"
+        assert sum(call[:2] == ["pr", "merge"] for call in calls) == 1
 
     def test_merge_requires_pr(self, repo: Path) -> None:
         task: dict[str, Any] = reviewing_task(repo)

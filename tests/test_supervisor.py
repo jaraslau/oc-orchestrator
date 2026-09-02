@@ -11,9 +11,11 @@ import pytest
 
 from orchestrator.core.config import Config, ledger_path
 from orchestrator.core.ledger import Ledger, TaskStatus
+from orchestrator.orchestration import service
 from orchestrator.orchestration.supervisor import (
     PlannedTask,
     PlanningError,
+    _give_up,
     extract_json_block,
     llm_review,
     parse_plan,
@@ -154,6 +156,47 @@ def _approve_all() -> Callable[[dict[str, Any], str, bool, str], tuple[str, str]
 
 
 class TestRunGoal:
+    def test_give_up_closes_open_pr(self, fast_factory: Path, monkeypatch: Any) -> None:
+        task = service.create_task(fast_factory, title="Abandoned")
+        ledger = Ledger.load(ledger_path(fast_factory))
+        current = ledger.get(task["id"])
+        current.pr = "https://github.com/acme/repo/pull/7"
+        ledger.update_status(current.id, TaskStatus.REVIEWING)
+        ledger.save()
+        closed: list[tuple[int, str]] = []
+
+        class FakeGh:
+            def __init__(self, root: Path, gh_bin: str = "gh") -> None:
+                pass
+
+            def state(self, number: int) -> str:
+                return "OPEN"
+
+            def close(self, number: int, comment: str) -> None:
+                closed.append((number, comment))
+
+        monkeypatch.setattr("orchestrator.orchestration.supervisor.GhClient", FakeGh)
+        _give_up(fast_factory, task["id"], "done trying", lambda _: None, cleanup_pr=True)
+
+        assert closed and closed[0][0] == 7
+        assert Ledger.load(ledger_path(fast_factory)).get(task["id"]).status == TaskStatus.BLOCKED
+
+    def test_pr_preflight_runs_before_planning(self, fast_factory: Path, monkeypatch: Any) -> None:
+        planned = False
+
+        def planner(root: Path, config: Config, goal: str) -> list[PlannedTask]:
+            nonlocal planned
+            planned = True
+            return [PlannedTask(title="Never created")]
+
+        def reject(root: Path, config: Config) -> None:
+            raise RuntimeError("not synchronized")
+
+        monkeypatch.setattr("orchestrator.orchestration.supervisor._preflight_pr_mode", reject)
+        with pytest.raises(RuntimeError, match="not synchronized"):
+            run_goal(fast_factory, "goal", pr_mode=True, planner=planner, io=lambda _: None)
+        assert not planned
+
     def test_pr_mode_routes_approved_task_through_pr(
         self, fast_factory: Path, monkeypatch: Any
     ) -> None:
@@ -165,7 +208,11 @@ class TestRunGoal:
         )
         monkeypatch.setattr(
             "orchestrator.orchestration.supervisor._push_task_branch",
-            lambda root, branch: calls.append("push"),
+            lambda root, config, branch: calls.append("push"),
+        )
+        monkeypatch.setattr(
+            "orchestrator.orchestration.supervisor._refresh_task_branch",
+            lambda worktree, primary: calls.append("refresh"),
         )
 
         def fake_open(root: Path, tid: str) -> dict[str, Any]:
@@ -197,7 +244,7 @@ class TestRunGoal:
         )
 
         assert rc == 0
-        assert calls == ["preflight", "push", "open", "merge"]
+        assert calls == ["preflight", "refresh", "push", "open", "merge"]
 
     def test_happy_path_two_independent_tasks(self, fast_factory: Path) -> None:
         plans: list[PlannedTask] = [
