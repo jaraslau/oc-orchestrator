@@ -136,6 +136,7 @@ the changes-requested loop.
 | `worker_timeout` | `3600` | seconds before a running worker is aborted |
 | `gate_commands` | `[]` | shell commands run in the worktree before review, e.g. `["poetry run pytest -q", "ruff check ."]` |
 | `gh_bin` | `"gh"` | GitHub CLI binary |
+| `git_remote` | `"origin"` | remote used for PR branches and primary synchronization |
 | `merge_method` | `"squash"` | used by gh PR merges |
 
 Per-task overrides beat config: `create_task(role=..., model=..., effort=...)` /
