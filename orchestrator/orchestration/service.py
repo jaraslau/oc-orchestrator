@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -378,6 +380,19 @@ def _default_pr_body(task: Task) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _sync_primary(root: Path, config: Config) -> None:
+    proc = subprocess.run(
+        ["git", "pull", "--ff-only", config.git_remote, config.primary_branch],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise RuntimeError(f"local primary sync failed: {detail}")
+
+
 @traced
 def open_pr(
     root: Path,
@@ -440,7 +455,12 @@ def request_changes(
 
 
 @traced
-def merge_task(root: Path, task_id: str, gh_runner: Runner | None = None) -> dict[str, Any]:
+def merge_task(
+    root: Path,
+    task_id: str,
+    gh_runner: Runner | None = None,
+    after_merge: Callable[[], object] | None = None,
+) -> dict[str, Any]:
     root = Path(root)
     config = load_config(root)
     ledger = _load_ledger(root)
@@ -464,7 +484,16 @@ def merge_task(root: Path, task_id: str, gh_runner: Runner | None = None) -> dic
     if number is None:
         raise InvalidState(f"cannot parse PR number from {task.pr}")
     client = _client(root, config, gh_runner)
-    client.merge(number, method=config.merge_method)
+    state = client.state(number)
+    if state == "CLOSED":
+        raise InvalidState(f"PR #{number} was closed without merging")
+    if state != "MERGED":
+        if not client.checks_ready(number):
+            raise DispatchBlocked(f"PR #{number} is waiting for GitHub checks")
+        client.merge(number, method=config.merge_method)
+        if client.state(number) != "MERGED":
+            raise DispatchBlocked(f"PR #{number} is waiting for GitHub's merge queue")
+    (after_merge or (lambda: _sync_primary(root, config)))()
     ledger.update_status(task_id, TaskStatus.MERGED)
     task.last_result = f"merged PR #{number}"
     ledger.save()

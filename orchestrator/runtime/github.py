@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from orchestrator.core.errors import GhError
+from orchestrator.core.errors import GhChecksFailed, GhError
 from orchestrator.logs import get
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -47,14 +47,19 @@ class GhClient:
             gh = gh_bin
 
             def runner(*args: str) -> subprocess.CompletedProcess[str]:
-                return subprocess.run([gh, *args], capture_output=True, text=True, cwd=self.root)
+                return subprocess.run(
+                    [gh, *args], capture_output=True, text=True, cwd=self.root, timeout=60
+                )
 
             self._runner = runner
 
     def _run(self, *args: str) -> str:
         safe_args = args[:3]
         log.debug("gh %s", " ".join(safe_args))
-        proc = self._runner(*args)
+        try:
+            proc = self._runner(*args)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GhError(f"gh {' '.join(args[:2])} failed: {exc}") from exc
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
             log.error("gh %s failed (exit=%d): %s", " ".join(safe_args), proc.returncode, detail)
@@ -104,6 +109,8 @@ class GhClient:
         m = re.search(r"https://\S+", out)
         url = m.group(0).rstrip(".)") if m else ""
         number = pr_number_from_url(url) or 0
+        if not url or not number:
+            raise GhError(f"gh pr create returned no pull-request URL: {out[:120].strip()}")
         return PrInfo(number=number, url=url, head=head, title=title, state="OPEN")
 
     def pr_diff(self, number: int) -> str:
@@ -112,8 +119,46 @@ class GhClient:
     def comment(self, number: int, body: str) -> None:
         self._run("pr", "comment", str(number), "--body", body)
 
+    def state(self, number: int) -> str:
+        state = self._run("pr", "view", str(number), "--json", "state", "--jq", ".state")
+        normalized = state.strip().upper()
+        if normalized not in {"OPEN", "CLOSED", "MERGED"}:
+            raise GhError(f"unexpected state for PR #{number}: {state.strip()!r}")
+        return normalized
+
+    def checks_ready(self, number: int) -> bool:
+        """Return False while checks run; raise when a completed check failed."""
+        args = ("pr", "checks", str(number), "--json", "name,bucket")
+        try:
+            proc = self._runner(*args)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GhError(f"gh pr checks failed: {exc}") from exc
+        text = (proc.stdout or "").strip()
+        detail = (proc.stderr or proc.stdout).strip()
+        if "no checks reported" in detail.lower():
+            return True
+        if proc.returncode not in {0, 1, 8}:
+            raise GhError(f"gh pr checks failed: {detail}")
+        if proc.returncode != 0 and not text:
+            raise GhError(f"gh pr checks failed: {detail or f'exit {proc.returncode}'}")
+        try:
+            rows = _json_array(text or "[]")
+        except (TypeError, ValueError) as exc:
+            raise GhError(f"unexpected gh checks output: {text[:120]}") from exc
+        failed = [
+            str(row.get("name") or "unknown")
+            for row in rows
+            if isinstance(row, dict) and row.get("bucket") in {"fail", "cancel"}
+        ]
+        if failed:
+            raise GhChecksFailed(f"GitHub checks failed: {', '.join(failed)}")
+        return not any(isinstance(row, dict) and row.get("bucket") == "pending" for row in rows)
+
     def merge(self, number: int, method: str = "squash") -> None:
         self._run("pr", "merge", str(number), f"--{method}", "--delete-branch")
+
+    def close(self, number: int, comment: str) -> None:
+        self._run("pr", "close", str(number), "--comment", comment, "--delete-branch")
 
 
 def _json_array(text: str) -> list[Any]:

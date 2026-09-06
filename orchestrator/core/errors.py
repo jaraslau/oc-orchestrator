@@ -25,3 +25,7 @@ class WorktreeError(OrchestratorError):
 
 class GhError(OrchestratorError):
     """GitHub CLI (gh) invocation failure."""
+
+
+class GhChecksFailed(GhError):
+    """GitHub checks completed unsuccessfully."""
