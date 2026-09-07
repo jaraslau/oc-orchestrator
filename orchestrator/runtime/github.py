@@ -128,31 +128,36 @@ class GhClient:
 
     def checks_ready(self, number: int) -> bool:
         """Return False while checks run; raise when a completed check failed."""
-        args = ("pr", "checks", str(number), "--json", "name,bucket")
-        try:
-            proc = self._runner(*args)
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise GhError(f"gh pr checks failed: {exc}") from exc
-        text = (proc.stdout or "").strip()
-        detail = (proc.stderr or proc.stdout).strip()
-        if "no checks reported" in detail.lower():
-            return True
-        if proc.returncode not in {0, 1, 8}:
-            raise GhError(f"gh pr checks failed: {detail}")
-        if proc.returncode != 0 and not text:
-            raise GhError(f"gh pr checks failed: {detail or f'exit {proc.returncode}'}")
+        text = self._run(
+            "pr",
+            "view",
+            str(number),
+            "--json",
+            "statusCheckRollup",
+            "--jq",
+            ".statusCheckRollup",
+        ).strip()
         try:
             rows = _json_array(text or "[]")
         except (TypeError, ValueError) as exc:
             raise GhError(f"unexpected gh checks output: {text[:120]}") from exc
         failed = [
-            str(row.get("name") or "unknown")
+            str(row.get("name") or row.get("context") or "unknown")
             for row in rows
-            if isinstance(row, dict) and row.get("bucket") in {"fail", "cancel"}
+            if isinstance(row, dict)
+            and (row.get("conclusion") or row.get("state"))
+            in {"ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE", "STARTUP_FAILURE", "TIMED_OUT"}
         ]
         if failed:
             raise GhChecksFailed(f"GitHub checks failed: {', '.join(failed)}")
-        return not any(isinstance(row, dict) and row.get("bucket") == "pending" for row in rows)
+        return not any(
+            isinstance(row, dict)
+            and (
+                ("status" in row and row.get("status") != "COMPLETED")
+                or row.get("state") in {"EXPECTED", "PENDING"}
+            )
+            for row in rows
+        )
 
     def merge(self, number: int, method: str = "squash") -> None:
         self._run("pr", "merge", str(number), f"--{method}", "--delete-branch")
