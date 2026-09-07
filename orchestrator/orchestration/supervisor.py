@@ -569,6 +569,13 @@ def run_goal(
                                     log.exception("failed to post branch conflict: task=%s", tid)
                             send_correction(tid, correction, loop)
                             continue
+                        if (
+                            status == "REVIEWING"
+                            and t.get("role") == "orchestrator-reviewer"
+                            and not _worktree_diff(worktree, config.primary_branch).strip()
+                        ):
+                            _finalize_merge(root, config, tid, t, emit)
+                            continue
                         try:
                             _push_task_branch(root, config, t["branch"])
                             if status == "REVIEWING":
