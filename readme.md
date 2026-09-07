@@ -1,7 +1,9 @@
 # oc-orchestrator
 
-OpenCode-backed orchestrator for my projects.
-Most of the code was written via said orchestrator with Big Pickle as a primary model.
+OpenCode-backed orchestrator for my projects. \
+Most of the code was written via said orchestrator with Big Pickle as a primary model. \
+A fun thing you could do - is to run it through another agent and it would be a full-on ouroboros-type thing. \
+Below is the auto-generated readme:
 
 oc-orchestrator coordinates multiple autonomous coding agents working
 concurrently in isolated git branches/worktrees. An LLM plans and reviews;
@@ -16,7 +18,7 @@ dependency-aware integration.
 | **Manager** | LLM agent that decomposes a goal into tasks (playbook shipped with `init`) |
 | **Worker** | Headless `opencode run --auto` session in an isolated git worktree |
 | **Role** | Worker persona: `orchestrator-worker`, `orchestrator-tester`, `orchestrator-reviewer`, or any custom `.md` you drop in |
-| **Ledger** | `.orchestrator/ledger.json` — atomic, restart-safe task state |
+| **Ledger** | `.orchestrator/ledger.json` - atomic, restart-safe task state |
 | **Handoff** | Structured block every worker must end its log with; parsed to drive status transitions |
 | **Supervisor** | The `run` command: plan → dispatch → poll → gate → review → merge/rework loop |
 
@@ -64,25 +66,25 @@ oc-orchestrator run "<goal>" [--path REPO] [--dry-run]
 
 Pipeline:
 
-1. **Plan** — LLM chooses the smallest useful worker count and emits JSON tasks
+1. **Plan** - LLM chooses the smallest useful worker count and emits JSON tasks
    with objective, criteria, dependencies, role, configured model, and effort.
    Invalid plans retry once, then degrade to one general worker.
-2. **Create** — ledger entries on branch names `agent/task-NNN-slug`;
+2. **Create** - ledger entries on branch names `agent/task-NNN-slug`;
    dependents cannot dispatch until their parents MERGE.
-3. **Dispatch** — ready tasks get isolated worktrees and background sessions,
+3. **Dispatch** - ready tasks get isolated worktrees and background sessions,
    capped by `max_parallel_tasks` / `--max-workers`.
-4. **Work** — worker commits to its branch and ends its log with a
+4. **Work** - worker commits to its branch and ends its log with a
    fenced ```handoff``` block.
-5. **Reconcile** — exit code + parsed handoff → `REVIEWING`; failures retry up
+5. **Reconcile** - exit code + parsed handoff → `REVIEWING`; failures retry up
    to `--max-retries`, then give-up (`BLOCKED`).
-6. **Gate** — `gate_commands` from config run inside the worktree.
-7. **Review** — reviewer LLM judges diff vs criteria + gate output. Malformed or
+6. **Gate** - `gate_commands` from config run inside the worktree.
+7. **Review** - reviewer LLM judges diff vs criteria + gate output. Malformed or
    unavailable reviews retry and fail closed; a failed gate cannot be overridden.
-8. **Integrate** — approved: local `--no-ff` merge by default, or `--pr` pushes
+8. **Integrate** - approved: local `--no-ff` merge by default, or `--pr` pushes
    the task branch and uses `gh` to create/reuse and merge a PR. Worktrees are
    removed and dependents auto-unblock. Changes update the same PR branch and
    receive a PR comment before re-dispatch, within `--max-corrections`.
-9. **Report** — completion summary; `--push` optionally publishes primary.
+9. **Report** - completion summary; `--push` optionally publishes primary.
 
 The LLM touches exactly two decision points (plan, review verdict); sequencing,
 isolation, gating, integration, and state are deterministic code.
@@ -118,7 +120,7 @@ role?, effort?)` ·
 `request_changes(task_id, comment)` · `merge_task(task_id)` ·
 `list_open_prs()` · `project_report()`
 
-`dispatch_task(instructions=...)` re-dispatches on the same branch — that is
+`dispatch_task(instructions=...)` re-dispatches on the same branch, that is
 the changes-requested loop.
 
 ## Configuration
@@ -142,7 +144,7 @@ the changes-requested loop.
 Per-task overrides beat config: `create_task(role=..., model=..., effort=...)` /
 `dispatch_task(role=..., model=..., effort=...)`. `effort` is the reasoning
 variant passed to opencode (`--variant`, e.g. `high`/`medium`/`low`);
-the planner picks it per task — high for architecture/debugging, low for
+the planner picks it per task - high for architecture/debugging, low for
 mechanical chores.
 
 ## Resilience & observability
@@ -160,7 +162,7 @@ for live stderr output including per-tool call status, failover switches, and
 session lifecycle events.
 
 The `worker_status` worker dict (from `task_status`) includes `session_id` and
-`model_used` — the actual model that completed the work.
+`model_used` - the actual model that completed the work.
 
 Workers use a shared `opencode serve` instance.
 
@@ -177,7 +179,7 @@ create/dispatch time.
 `PLANNED → DISPATCHED → WORKING → REVIEWING → MERGED`
 with detours: `BLOCKED` (unmet dependencies or supervisor give-up),
 `CHANGES_REQUESTED` (re-dispatch loop), `FAILED`, `CANCELLED`.
-`REVIEWING` means "work finished, awaiting review" — it is the success state,
+`REVIEWING` means "work finished, awaiting review" - it is the success state,
 not an error.
 
 ## Observability
@@ -220,7 +222,7 @@ Worker isolation model: one branch + one worktree per task under
 - `.opencode/agent/*` must be committed or dispatch breaks in fresh worktrees.
 - `--pr` requires `gh auth login` plus a clean primary branch synchronized with
   `origin`; it fails closed instead of falling back to a local merge.
-- Gates are only as good as `gate_commands` — set them for real repos.
+- Gates are only as good as `gate_commands` - set them for real repos.
 - One ledger per repo; don't run two supervisors against the same root.
 
 ## Development
