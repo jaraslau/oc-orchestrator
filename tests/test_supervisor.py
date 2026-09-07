@@ -246,6 +246,45 @@ class TestRunGoal:
         assert rc == 0
         assert calls == ["preflight", "refresh", "push", "open", "merge"]
 
+    def test_pr_mode_completes_review_only_task_without_empty_pr(
+        self, fast_factory: Path, monkeypatch: Any
+    ) -> None:
+        agents = fast_factory / ".opencode" / "agent"
+        (agents / "orchestrator-reviewer.md").write_text("reviewer\n")
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "orchestrator.orchestration.supervisor._preflight_pr_mode",
+            lambda root, config: None,
+        )
+        monkeypatch.setattr(
+            "orchestrator.orchestration.supervisor._refresh_task_branch",
+            lambda worktree, primary: calls.append("refresh"),
+        )
+        monkeypatch.setattr(
+            "orchestrator.orchestration.supervisor._push_task_branch",
+            lambda *args: pytest.fail("review-only task should not be pushed"),
+        )
+
+        rc = run_goal(
+            fast_factory,
+            "review",
+            pr_mode=True,
+            max_loops=20,
+            poll_seconds=0.01,
+            planner=lambda root, config, goal: [
+                PlannedTask(title="Review", role="orchestrator-reviewer")
+            ],
+            gate_runner=lambda wt, cfg: (True, "ok"),
+            reviewer=_approve_all(),
+            io=lambda message: None,
+        )
+
+        task = Ledger.load(ledger_path(fast_factory)).filter()[-1]
+        assert rc == 0
+        assert calls == ["refresh"]
+        assert task.status == TaskStatus.MERGED
+        assert task.pr is None
+
     def test_happy_path_two_independent_tasks(self, fast_factory: Path) -> None:
         plans: list[PlannedTask] = [
             PlannedTask(title="Add foo", objective="implement foo"),
