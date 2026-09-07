@@ -113,8 +113,8 @@ class TestGhClient:
     def test_checks_report_pending_and_failure(self) -> None:
         responses = iter(
             [
-                (8, '[{"name":"ci","bucket":"pending"}]', ""),
-                (1, '[{"name":"ci","bucket":"fail"}]', ""),
+                (0, '[{"name":"ci","status":"IN_PROGRESS","conclusion":""}]', ""),
+                (0, '[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]', ""),
             ]
         )
         runner, _ = make_runner(lambda args: next(responses))
@@ -227,9 +227,9 @@ class TestPrLifecycle:
         def handler(args: list[str]) -> tuple[int, str, str]:
             nonlocal remote_state
             if args[:2] == ["pr", "view"]:
+                if "statusCheckRollup" in args:
+                    return 0, "[]", ""
                 return 0, remote_state, ""
-            if args[:2] == ["pr", "checks"]:
-                return 0, "[]", ""
             if args[:2] == ["pr", "merge"]:
                 merges.append(args)
                 remote_state = "MERGED"
@@ -255,9 +255,9 @@ class TestPrLifecycle:
 
         def handler(args: list[str]) -> tuple[int, str, str]:
             if args[:2] == ["pr", "view"]:
+                if "statusCheckRollup" in args:
+                    return 0, '[{"name":"ci","status":"IN_PROGRESS"}]', ""
                 return 0, "OPEN", ""
-            if args[:2] == ["pr", "checks"]:
-                return 8, '[{"name":"ci","bucket":"pending"}]', ""
             raise AssertionError(f"unexpected gh call: {args}")
 
         def callback() -> None:
@@ -283,9 +283,9 @@ class TestPrLifecycle:
         def handler(args: list[str]) -> tuple[int, str, str]:
             nonlocal remote_state
             if args[:2] == ["pr", "view"]:
+                if "statusCheckRollup" in args:
+                    return 0, "[]", ""
                 return 0, remote_state, ""
-            if args[:2] == ["pr", "checks"]:
-                return 0, "[]", ""
             if args[:2] == ["pr", "merge"]:
                 remote_state = "MERGED"
                 return 0, "", ""
