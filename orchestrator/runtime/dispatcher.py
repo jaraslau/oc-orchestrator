@@ -13,6 +13,7 @@ from typing import Any, cast
 from orchestrator.core.config import Config, state_dir
 from orchestrator.core.storage import read_json, write_json_atomic
 from orchestrator.logs import get
+from orchestrator.runtime.runner import SessionAbortError
 
 log = get("dispatcher")
 
@@ -36,6 +37,8 @@ class DispatchRecord:
     ended_at: str | None = None
     session_id: str | None = None
     model_used: str | None = None
+    error: str | None = None
+    abort_failed: bool = False
 
 
 def parse_handoff(text: str) -> dict[str, str] | None:
@@ -60,6 +63,7 @@ class Dispatcher:
         self.root = root
         self._runner = runner
         self._handles: dict[str, Any] = {}
+        self._cancelled: dict[str, threading.Event] = {}
         self._registry_lock = threading.RLock()
 
     @property
@@ -102,6 +106,11 @@ class Dispatcher:
         agent_name: str | None = None,
         variant: str | None = None,
     ) -> DispatchRecord:
+        previous = self.poll(task_id)
+        if previous and (previous.exit_code is None or previous.abort_failed):
+            raise RuntimeError(
+                f"cannot dispatch {task_id}: previous session has not safely stopped"
+            )
         logs_dir = state_dir(self.root) / config.logs_dirname
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = logs_dir / f"{task_id.lower()}.log"
@@ -114,6 +123,8 @@ class Dispatcher:
             started_at=_now(),
         )
         self._store_record(record)
+        cancelled = threading.Event()
+        self._cancelled[task_id] = cancelled
         log.info(
             "worker thread starting: task=%s branch=%s agent=%s model=%s variant=%s",
             task_id,
@@ -129,7 +140,13 @@ class Dispatcher:
             def capture_session(handle: Any) -> None:
                 self._handles[task_id] = handle
                 record.session_id = handle.session_id
+                record.model_used = handle.model
                 self._store_record(record)
+                with log_path.open("a", encoding="utf-8") as fh:
+                    fh.write(
+                        f"\n[{_now()}] session={handle.session_id} "
+                        f"model={handle.model or 'server-default'} branch={branch}\n"
+                    )
 
             try:
                 result = self._runner.run(
@@ -140,6 +157,7 @@ class Dispatcher:
                     variant=variant,
                     timeout=config.worker_timeout,
                     on_session=capture_session,
+                    cancelled=cancelled,
                 )
                 record.session_id = result.session_id
                 record.model_used = result.models_tried[-1] if result.models_tried else model
@@ -153,17 +171,23 @@ class Dispatcher:
                 log.info("task %s completed (session %s)", task_id, result.session_id)
             except Exception as exc:
                 diagnosis = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+                record.error = diagnosis
+                record.abort_failed = isinstance(exc, SessionAbortError)
                 log.exception("task %s failed: %s", task_id, diagnosis)
                 try:
                     with log_path.open("a", encoding="utf-8") as fh:
-                        fh.write(f"\n[orchestrator] worker failed: {diagnosis}\n")
+                        fh.write(
+                            f"\n[{_now()}] worker failed: {diagnosis}\n{traceback.format_exc()}\n"
+                        )
                 except OSError:
                     log.exception("could not append failure to worker log: %s", log_path)
                 if record.model_used is None:
                     record.model_used = model or ""
                 self._finalize(record, 1)
             finally:
-                self._handles.pop(task_id, None)
+                if self._cancelled.get(task_id) is cancelled:
+                    self._handles.pop(task_id, None)
+                    self._cancelled.pop(task_id, None)
 
         thread = threading.Thread(target=work, name=f"worker-{task_id}", daemon=True)
         thread.start()
@@ -196,6 +220,8 @@ class Dispatcher:
 
     def terminate(self, task_id: str) -> bool:
         """Abort a running worker session."""
+        if cancelled := self._cancelled.get(task_id):
+            cancelled.set()
         handle = self._handles.get(task_id)
         if handle is not None:
             self._runner.abort_session(handle)

@@ -23,6 +23,7 @@ from orchestrator.runtime.resilience import (
         ("502 Bad Gateway", ErrorKind.PROVIDER_UNAVAILABLE),
         ("provider is overloaded", ErrorKind.PROVIDER_UNAVAILABLE),
         ("ECONNRESET while streaming", ErrorKind.TRANSIENT_NETWORK),
+        ("connection failure: DNS lookup failed", ErrorKind.TRANSIENT_NETWORK),
         ("request timed out after 30s", ErrorKind.TRANSIENT_NETWORK),
         ("prompt is too long: maximum context length exceeded", ErrorKind.CONTEXT_OVERFLOW),
         ("content policy violation", ErrorKind.CONTENT_FILTER),

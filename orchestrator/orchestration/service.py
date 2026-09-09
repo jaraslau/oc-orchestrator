@@ -39,7 +39,12 @@ class ServerRuntime:
         self.client = OpencodeClient(self.base_url)
         self.tap = EventTap(self.client)
         self.tap.start()
-        self.runner = SessionRunner(self.client, self.tap, fallback_models=config.fallback_models)
+        self.runner = SessionRunner(
+            self.client,
+            self.tap,
+            fallback_models=config.fallback_models,
+            idle_timeout=config.session_idle_timeout,
+        )
         log.info("runtime ready: %s", self.base_url)
 
     def close(self) -> None:
@@ -328,6 +333,8 @@ def _reconcile(ledger: Ledger, task: Task, record: DispatchRecord) -> None:
     else:
         status = TaskStatus.FAILED
         note = f"worker exited {record.exit_code}"
+        if record.error:
+            note += f": {record.error}"
 
     task.last_result = note
     ledger.update_status(task.id, status)
@@ -346,6 +353,8 @@ def _record_dict(record: DispatchRecord | None) -> dict[str, Any] | None:
         if record is None
         else {
             "exit_code": record.exit_code,
+            "error": record.error,
+            "abort_failed": record.abort_failed,
             "log": record.log_path,
             "worktree": record.worktree,
             "session_id": record.session_id,

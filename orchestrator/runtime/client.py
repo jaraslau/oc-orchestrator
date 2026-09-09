@@ -30,6 +30,7 @@ class OpencodeApiError(RuntimeError):
 class SessionHandle:
     session_id: str
     directory: str
+    model: str | None = None
 
 
 class OpencodeClient:
@@ -148,9 +149,12 @@ class OpencodeClient:
                 raise
 
     def events(self) -> Iterator[dict[str, Any]]:
-        log.debug("opening event stream: %s/event", self.base_url)
+        log.info("opening global event stream: %s/global/event", self.base_url)
         with httpx.stream(
-            "GET", f"{self.base_url}/event", timeout=None, trust_env=False
+            "GET",
+            f"{self.base_url}/global/event",
+            timeout=httpx.Timeout(30.0, read=45.0),
+            trust_env=False,
         ) as response:
             if response.status_code >= 400:
                 raise OpencodeApiError(response.status_code, "event stream failed")
@@ -163,7 +167,8 @@ class OpencodeClient:
                     continue
                 payload = "\n".join(buffer)
                 try:
-                    yield json.loads(payload)
+                    event = json.loads(payload)
+                    yield event.get("payload", event)
                 except json.JSONDecodeError:
                     log.warning("discarding malformed event frame: %r", payload[:400])
                 buffer.clear()

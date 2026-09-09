@@ -26,6 +26,7 @@ class Config:
     fallback_models: list[str] = field(default_factory=list)
     max_parallel_tasks: int = 4
     worker_timeout: float = 3600.0
+    session_idle_timeout: float = 300.0
     gate_commands: list[str] = field(default_factory=list)
     opencode_bin: str = "opencode"
     server_port: int = 0

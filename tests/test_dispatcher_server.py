@@ -2,8 +2,11 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from orchestrator.core.config import Config
 from orchestrator.runtime.dispatcher import Dispatcher, DispatchRecord
+from orchestrator.runtime.runner import SessionAbortError
 from tests.conftest import FakeRunner, wait_until
 
 
@@ -52,6 +55,17 @@ def test_failure_recorded_with_diagnosis(repo: Path, tmp_path: Path) -> None:
     final = dispatcher.poll("TASK-900")
     assert final is not None
     assert "502 bad gateway" in Path(final.log_path).read_text()
+    assert "502 bad gateway" in (final.error or "")
+
+
+def test_unconfirmed_abort_blocks_redispatch(repo: Path, tmp_path: Path) -> None:
+    dispatcher = Dispatcher(repo, FakeRunner(SessionAbortError("could not stop session")))
+    spawn(dispatcher, tmp_path)
+    assert wait_until(
+        lambda: (record := dispatcher.poll("TASK-900")) is not None and record.abort_failed
+    )
+    with pytest.raises(RuntimeError, match="has not safely stopped"):
+        spawn(dispatcher, tmp_path)
 
 
 def test_agent_model_variant_forwarded(repo: Path, tmp_path: Path) -> None:

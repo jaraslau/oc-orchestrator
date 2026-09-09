@@ -79,5 +79,13 @@ class TestWorktrees:
         assert branch_exists(repo, branch)  # same branch reused, not recreated from base
         remove_worktree(repo, config, branch)
 
+    def test_retry_preserves_uncommitted_and_untracked_files(self, repo: Path) -> None:
+        path, branch = ensure_worktree(repo, Config(), "TASK-001", "Partial")
+        (path / "readme.md").write_text("edited")
+        (path / "new.py").write_text("partial implementation")
+        reused, _ = ensure_worktree(repo, Config(), "TASK-001", "Partial", branch)
+        assert (reused / "readme.md").read_text() == "edited"
+        assert (reused / "new.py").read_text() == "partial implementation"
+
     def test_remove_missing_is_noop(self, repo: Path) -> None:
         assert remove_worktree(repo, Config(), "agent/task-999-nope") is False

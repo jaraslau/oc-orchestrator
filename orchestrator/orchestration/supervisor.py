@@ -438,6 +438,9 @@ def run_goal(
         approved: set[str] = set()
 
         def send_correction(tid: str, instructions: str, loop: int) -> None:
+            if loop == max_loops:
+                give_up(tid, "supervisor loop budget exhausted before correction")
+                return
             pending_corrections[tid] = instructions
             if corrections[tid] >= max_corrections:
                 pending_corrections.pop(tid, None)
@@ -642,6 +645,12 @@ def run_goal(
                 elif status in ("FAILED", "BLOCKED"):
                     progressed = True
                     note = t.get("last_result") or ""
+                    if worker.get("abort_failed"):
+                        give_up(tid, f"previous session could not be stopped; {note}")
+                        continue
+                    if loop == max_loops:
+                        give_up(tid, f"supervisor loop budget exhausted before retry; {note}")
+                        continue
                     if retries[tid] < max_retries:
                         if not _worker_slot_available(root, ids, worker_limit):
                             log.debug("retry queued for %s: worker limit reached", tid)
@@ -732,10 +741,7 @@ def _give_up(root: Path, tid: str, note: str, io: Io, *, cleanup_pr: bool = Fals
                 client.close(number, f"oc-orchestrator gave up on {tid}: {note[:200]}")
         except Exception:
             log.exception("PR cleanup failed after giving up on %s", tid)
-    try:
-        cleanup_worktree(root, tid)
-    except Exception:
-        log.exception("worktree cleanup failed after giving up on %s", tid)
+    log.warning("preserving failed task worktree: task=%s branch=%s", tid, t.branch)
     io(f"gave up on {tid}: {note[:120]}")
 
 

@@ -33,6 +33,7 @@ class ErrorKind(StrEnum):
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     MODEL_NOT_FOUND = "model_not_found"
     TRANSIENT_NETWORK = "transient_network"
+    EMPTY_RESPONSE = "empty_response"
     CONTEXT_OVERFLOW = "context_overflow"
     CONTENT_FILTER = "content_filter"
     ABORTED = "aborted"
@@ -47,12 +48,17 @@ PROVIDER_SIDED: frozenset[ErrorKind] = frozenset(
         ErrorKind.PROVIDER_UNAVAILABLE,
         ErrorKind.MODEL_NOT_FOUND,
         ErrorKind.TRANSIENT_NETWORK,
+        ErrorKind.EMPTY_RESPONSE,
     }
 )
 
 _PATTERNS: list[tuple[ErrorKind, re.Pattern[str]]] = [
     (kind, re.compile(pat, re.IGNORECASE))
     for kind, pat in (
+        (
+            ErrorKind.EMPTY_RESPONSE,
+            r"empty assistant response|server returned no assistant message",
+        ),
         (ErrorKind.PROVIDER_AUTH, r"\b401\b|\b403\b"),
         (
             ErrorKind.PROVIDER_AUTH,
@@ -72,7 +78,7 @@ _PATTERNS: list[tuple[ErrorKind, re.Pattern[str]]] = [
         ),
         (
             ErrorKind.TRANSIENT_NETWORK,
-            r"econn.?reset|econn.?refused|connection (reset|refused|error)|"
+            r"econn.?reset|econn.?refused|connection (reset|refused|error|failure)|"
             r"timed? ?out|temporary failure|getaddrinfo",
         ),
         (
@@ -117,9 +123,9 @@ class ModelChain:
 
     def advance(self, reason: str) -> str | None:
         failed = self.current
-        log.warning("model %s failed (%s); failing over", failed, reason)
         self._index += 1
         if self.exhausted:
+            log.warning("model chain exhausted after %s (%s)", failed, reason)
             return None
         nxt = self.current
         log.info("switching model: %s -> %s", failed, nxt)

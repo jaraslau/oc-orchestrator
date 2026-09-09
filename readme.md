@@ -135,7 +135,8 @@ the changes-requested loop.
 | `worker_model` / `planner_model` / `reviewer_model` | `null` | model pins per role; unset = opencode default |
 | `fallback_models` | `[]` | ordered chain of backup models; on provider failure the next model is tried automatically |
 | `max_parallel_tasks` | `4` | maximum workers live at once; `--max-workers` overrides it |
-| `worker_timeout` | `3600` | seconds before a running worker is aborted |
+| `worker_timeout` | `3600` | total seconds for a worker dispatch, including model failovers/retry |
+| `session_idle_timeout` | `300` | seconds without session progress before abort and recovery (also applies to planning/review) |
 | `gate_commands` | `[]` | shell commands run in the worktree before review, e.g. `["poetry run pytest -q", "ruff check ."]` |
 | `gh_bin` | `"gh"` | GitHub CLI binary |
 | `git_remote` | `"origin"` | remote used for PR branches and primary synchronization |
@@ -165,6 +166,25 @@ The `worker_status` worker dict (from `task_status`) includes `session_id` and
 `model_used` - the actual model that completed the work.
 
 Workers use a shared `opencode serve` instance.
+
+The global event stream covers every worker worktree. Logs include session/model
+IDs, tool states and call IDs, permission/question waits, nested provider errors,
+stream reconnects, and a heartbeat every minute with elapsed time, inactivity,
+last activity, and event-stream age. Worker logs also record each attempt's
+session/model and failure traceback; task status/report retains the failure reason.
+Prompts, reasoning text, and tool arguments/output are not copied into event logs.
+
+After `session_idle_timeout` seconds without progress, the orchestrator aborts the
+session before trying the next configured `fallback_models` entry. If the chain
+is exhausted by a timeout/network failure or empty response, it retries the last
+model once in a fresh session. All attempts share the original timeout budget.
+No backup is chosen implicitly; a single-model chain emits a warning. Increase
+the idle limit for tools that legitimately run silently for more than five minutes.
+Cancellation never triggers failover; an unconfirmed abort blocks redispatch.
+
+Supervisor retries/corrections do not start on the final loop. Failed worktrees,
+including uncommitted files, are preserved and reused for recovery; only successful
+integration removes them automatically. Review/gates still run before integration.
 
 ## Roles & custom agents
 

@@ -1,4 +1,5 @@
 import subprocess
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,11 +69,12 @@ class FakeRunner:
         variant: str | None = None,
         timeout: float | None = None,
         on_session: Callable[[SessionHandle], None] | None = None,
+        cancelled: threading.Event | None = None,
     ) -> SimpleNamespace:
         self.calls.append(
             {"prompt": prompt, "cwd": cwd, "agent": agent, "model": model, "variant": variant}
         )
-        handle = SessionHandle(f"ses_{len(self.calls)}", str(cwd))
+        handle = SessionHandle(f"ses_{len(self.calls)}", str(cwd), model or "m/default")
         if on_session is not None:
             on_session(handle)
         if isinstance(self.behavior, Exception):

@@ -22,7 +22,7 @@ from orchestrator.orchestration.supervisor import (
     plan_tasks,
     run_goal,
 )
-from tests.conftest import HANDOFF_OK, configured
+from tests.conftest import HANDOFF_OK, configured, wait_until
 
 
 class TestExtractJson:
@@ -508,6 +508,44 @@ class TestRunGoal:
         task = next(iter(Ledger.load(ledger_path(fast_factory)).tasks.values()))
         assert task.status == TaskStatus.BLOCKED
         assert "loop budget exhausted" in (task.last_result or "")
+
+    def test_last_loop_does_not_retry_or_delete_partial_work(
+        self,
+        fast_factory: Path,
+        monkeypatch: Any,
+    ) -> None:
+        def partial(prompt: str, cwd: Path) -> str:
+            (cwd / "partial.py").write_text("work in progress")
+            raise TimeoutError("provider timed out")
+
+        runner = configured(fast_factory, partial)
+        dispatcher = service.get_dispatcher(fast_factory)
+        original = service.dispatch_task
+
+        def dispatch(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            result = original(*args, **kwargs)
+            assert wait_until(lambda: dispatcher.poll(args[1]).exit_code == 1)
+            return result
+
+        monkeypatch.setattr("orchestrator.orchestration.supervisor.dispatch_task", dispatch)
+        assert (
+            run_goal(
+                fast_factory,
+                "goal",
+                max_loops=1,
+                max_retries=3,
+                poll_seconds=0.01,
+                planner=lambda *args: [PlannedTask(title="Partial")],
+                io=lambda s: None,
+            )
+            == 1
+        )
+        assert len(runner.calls) == 1
+        task = next(iter(Ledger.load(ledger_path(fast_factory)).tasks.values()))
+        record = dispatcher.poll(task.id)
+        assert record is not None
+        assert (Path(record.worktree) / "partial.py").read_text() == "work in progress"
+        assert "provider timed out" in (task.last_result or "")
 
     def test_worker_limit_also_applies_to_correction_dispatches(self, fast_factory: Path) -> None:
         lock: threading.Lock = threading.Lock()

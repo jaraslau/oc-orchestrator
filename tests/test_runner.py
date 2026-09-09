@@ -74,13 +74,7 @@ class FakeClient(OpencodeClient):
 
 class StubTap(EventTap):
     def __init__(self) -> None:
-        self.errors: dict[str, dict[str, Any]] = {}
-        self._stop: threading.Event = threading.Event()
-        self._thread: threading.Thread | None = None
-        self.client: OpencodeClient = cast(OpencodeClient, None)
-
-    def pop_error(self, session_id: str) -> dict[str, Any] | None:
-        return self.errors.pop(session_id, None)
+        super().__init__(cast(OpencodeClient, None))
 
 
 def make_runner(
@@ -206,9 +200,10 @@ class TestRun:
         client = FakeClient()
         runner = make_runner(client)
         client.fail_prompt_for["ses_0"] = TimeoutError("request timed out")
+        client.fail_prompt_for["ses_1"] = TimeoutError("request timed out")
         with pytest.raises(TimeoutError):
-            runner.run("goal", Path("/wt"), timeout=0.01)
-        assert client.aborted == ["ses_0"]
+            runner.run("goal", Path("/wt"))
+        assert client.aborted == ["ses_0", "ses_1"]
 
     def test_on_session_hook_receives_handle(self) -> None:
         client = FakeClient()
@@ -219,6 +214,49 @@ class TestRun:
 
 
 class TestEventTapHandling:
+    def test_worktree_activity_and_nested_error(self) -> None:
+        tap = EventTap(FakeClient())
+        tap.watch("worker")
+        tap._handle(
+            {
+                "type": "message.part.updated",
+                "properties": {
+                    "part": {
+                        "sessionID": "worker",
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"status": "running"},
+                    },
+                },
+            }
+        )
+        last = tap.progress("worker")
+        assert last[1] == "tool bash running"
+        tap._handle({"type": "server.heartbeat", "properties": {}})
+        tap._handle(
+            {
+                "type": "session.status",
+                "properties": {
+                    "sessionID": "worker",
+                    "status": {"type": "busy"},
+                },
+            }
+        )
+        assert tap.progress("worker") == last
+        tap._handle(
+            {
+                "type": "session.error",
+                "properties": {
+                    "sessionID": "worker",
+                    "error": {
+                        "name": "APIError",
+                        "data": {"statusCode": 429, "message": "Too many requests"},
+                    },
+                },
+            }
+        )
+        assert tap.pop_error("worker") == {"name": "APIError", "message": "429: Too many requests"}
+
     def test_session_error_recorded(self) -> None:
         tap = EventTap(client=cast(OpencodeClient, FakeClient()))
         tap._handle(
@@ -235,3 +273,130 @@ class TestEventTapHandling:
         tap._handle({"type": "storage.write", "properties": {}})
         tap._handle({})
         assert not tap.errors
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_stall_aborts_before_failover_but_progress_keeps_session_alive(active: bool) -> None:
+    class SlowClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stopped = threading.Event()
+
+        def prompt(self, session_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            if session_id == "ses_0":
+                if active:
+                    for _ in range(12):
+                        tap._handle(
+                            {
+                                "type": "message.part.delta",
+                                "properties": {
+                                    "sessionID": session_id,
+                                    "delta": "x",
+                                },
+                            }
+                        )
+                        assert not self.stopped.wait(0.01)
+                else:
+                    assert self.stopped.wait(2), "watchdog did not abort the stalled session"
+            else:
+                assert self.aborted == ["ses_0"]
+            return super().prompt(session_id, *args, **kwargs)
+
+        def abort(self, session_id: str, directory: str) -> None:
+            super().abort(session_id, directory)
+            self.stopped.set()
+
+    client = SlowClient()
+    tap = EventTap(client)
+    runner = SessionRunner(client, tap, ["opencode/backup-model"], 0.005, idle_timeout=0.06)
+    result = runner.run("goal", Path("/wt"), timeout=2)
+    assert result.models_tried == (
+        ["opencode/big-pickle"] if active else ["opencode/big-pickle", "opencode/backup-model"]
+    )
+    assert not tap.activity
+
+
+def test_empty_response_retry_is_bounded_and_cancellation_does_not_retry() -> None:
+    cancelled = threading.Event()
+
+    class EmptyClient(FakeClient):
+        def prompt(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {"info": {"role": "assistant"}, "parts": []}
+
+    client = EmptyClient()
+    with pytest.raises(RuntimeError, match="empty assistant response"):
+        make_runner(client).run("goal", Path("/wt"))
+    assert len(client.sessions) == 2
+    cancelled.set()
+    with pytest.raises(RuntimeError, match="cancelled"):
+        make_runner(client).run("goal", Path("/wt"), cancelled=cancelled)
+    assert len(client.sessions) == 2
+
+
+def test_abort_failure_prevents_failover() -> None:
+    class AbortFailure(FakeClient):
+        def abort(self, session_id: str, directory: str) -> None:
+            raise OpencodeApiError(500, "server unavailable")
+
+    client = AbortFailure()
+    client.fail_prompt_for["ses_0"] = TimeoutError("request timed out")
+    with pytest.raises(RuntimeError, match="could not stop session"):
+        make_runner(client, ["opencode/backup-model"]).run("goal", Path("/wt"))
+    assert len(client.sessions) == 1
+
+
+def test_response_body_error_triggers_failover_without_sse() -> None:
+    class BodyError(FakeClient):
+        def prompt(self, session_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            if session_id == "ses_0":
+                return {
+                    "info": {
+                        "role": "assistant",
+                        "error": {
+                            "name": "APIError",
+                            "data": {"statusCode": 429, "message": "slow down"},
+                        },
+                    },
+                    "parts": [],
+                }
+            return super().prompt(session_id, *args, **kwargs)
+
+    client = BodyError()
+    result = make_runner(client, ["opencode/backup-model"]).run("goal", Path("/wt"))
+    assert result.models_tried == ["opencode/big-pickle", "opencode/backup-model"]
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_total_budget_and_live_cancellation_stop_without_new_attempts(cancel: bool) -> None:
+    cancelled = threading.Event()
+    stopped = threading.Event()
+
+    class BusyClient(FakeClient):
+        def prompt(self, session_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            if cancel:
+                cancelled.set()
+            for _ in range(200):
+                tap._handle(
+                    {
+                        "type": "message.part.delta",
+                        "properties": {
+                            "sessionID": session_id,
+                            "delta": "x",
+                        },
+                    }
+                )
+                if stopped.wait(0.005):
+                    return super().prompt(session_id, *args, **kwargs)
+            pytest.fail("monitor did not stop the request")
+
+        def abort(self, session_id: str, directory: str) -> None:
+            super().abort(session_id, directory)
+            stopped.set()
+
+    client = BusyClient()
+    tap = EventTap(client)
+    runner = SessionRunner(client, tap, ["opencode/backup-model"], 0.005, idle_timeout=1)
+    with pytest.raises(RuntimeError if cancel else TimeoutError):
+        runner.run("goal", Path("/wt"), timeout=0.08, cancelled=cancelled)
+    assert len(client.sessions) == 1
+    assert client.aborted == ["ses_0"]

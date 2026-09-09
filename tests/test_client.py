@@ -16,14 +16,19 @@ class _EventStream:
         return None
 
     def iter_lines(self) -> Iterator[str]:
-        yield 'data: {"type":"session.idle","properties":{"sessionID":"ses_1"}}'
+        yield (
+            'data: {"directory":"/repo/worktree","payload":'
+            '{"type":"session.idle","properties":{"sessionID":"ses_1"}}}'
+        )
         yield ""
 
 
 def test_events_yields_complete_sse_frame(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "orchestrator.runtime.client.httpx.stream", lambda *args, **kwargs: _EventStream()
-    )
+    def stream(method: str, url: str, **kwargs: object) -> _EventStream:
+        assert url == "http://localhost:4096/global/event"
+        return _EventStream()
+
+    monkeypatch.setattr("orchestrator.runtime.client.httpx.stream", stream)
 
     events = list(OpencodeClient("http://localhost:4096").events())
 

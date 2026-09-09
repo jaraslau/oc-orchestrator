@@ -71,7 +71,7 @@ def ensure_worktree(
     title: str,
     existing_branch: str | None = None,
 ) -> tuple[Path, str]:
-    """Create (or recreate) the worktree for a task.
+    """Create or reuse the worktree for a task, preserving partial work on retry.
 
     Reuses an existing task branch when present so follow-up dispatches
     continue on the same branch. Returns (worktree_path, branch).
@@ -79,7 +79,12 @@ def ensure_worktree(
     branch = existing_branch or branch_name(config, task_id, title)
     path = worktree_path(root, config, branch)
     if path.exists():
-        _run_git(root, "worktree", "remove", "--force", str(path))
+        top = _run_git(path, "rev-parse", "--show-toplevel").stdout.strip()
+        current = _run_git(path, "symbolic-ref", "--short", "HEAD").stdout.strip()
+        if Path(top).resolve() != path.resolve() or current != branch:
+            raise WorktreeError(f"refusing to reuse mismatched worktree: {path}")
+        log.info("reusing worktree: task=%s branch=%s path=%s", task_id, branch, path)
+        return path, branch
     base = resolve_base(root, config)
     path.parent.mkdir(parents=True, exist_ok=True)
     if branch_exists(root, branch):
