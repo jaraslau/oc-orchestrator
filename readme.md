@@ -1,7 +1,7 @@
 # oc-orchestrator
 
 OpenCode-backed orchestrator for my projects. \
-Most of the code was written via said orchestrator with Big Pickle as a primary model. \
+Most of the code was written via said orchestrator with Big Pickle (also OX-Alpha when it was available) as a primary model. \
 A fun thing you could do - is to run it through another agent and it would be a full-on ouroboros-type thing. \
 Below is the auto-generated readme:
 
@@ -244,13 +244,3 @@ Worker isolation model: one branch + one worktree per task under
   `origin`; it fails closed instead of falling back to a local merge.
 - Gates are only as good as `gate_commands` - set them for real repos.
 - One ledger per repo; don't run two supervisors against the same root.
-
-## Development
-
-```sh
-poetry run pytest        # tests
-poetry run ruff check .  # lint
-```
-
-Layout follows the architecture table above; tests live in `tests/` with fake
-workers/planners so the suite runs without network or opencode.
